@@ -18,7 +18,7 @@ const WebSocket = require('ws');
 const pastaDestino = './anexos';
 const configFile = './glpi_config.json';
 let config = null;
-let whatsappClient = null; // Alterado de 'client' para 'whatsappClient'
+let whatsappClient = null;
 
 // Cria a pasta de destino se não existir
 if (!fs.existsSync(pastaDestino)) {
@@ -83,14 +83,15 @@ if (fs.existsSync(configFile)) {
 
 const app = express();
 
-// Configuração de sessão
+// Configuração de sessão (ATUALIZADA)
 app.use(session({
     secret: 'sua_chave_secreta_muito_segura_' + Math.random().toString(36).substring(2),
     resave: false,
     saveUninitialized: false,
     cookie: {
         secure: false, // Defina como true se estiver usando HTTPS
-        maxAge: 24 * 60 * 60 * 1000 // 24 horas
+        maxAge: 24 * 60 * 60 * 1000, // 24 horas
+        httpOnly: true // Adicionado para segurança
     }
 }));
 
@@ -119,11 +120,64 @@ function broadcastStatus() {
 }
 
 // ==============================================
+// MIDDLEWARE DE AUTENTICAÇÃO (ATUALIZADO)
+// ==============================================
+
+function requireLogin(req, res, next) {
+    // Rotas públicas que não requerem autenticação
+    const publicRoutes = ['/login', '/logout', '/auth'];
+    
+    // Se não requer login ou se está autenticado ou é rota pública, continua
+    if (!config.auth.requireLogin || req.session.loggedin || publicRoutes.includes(req.path)) {
+        return next();
+    }
+    
+    // Se a requisição é para a API, retorna erro JSON
+    if (req.originalUrl.startsWith('/api')) {
+        return res.status(401).json({ success: false, message: 'Não autenticado' });
+    }
+    
+    // Caso contrário, redireciona para login
+    return res.redirect('/login');
+}
+
+// ==============================================
+// ROTAS DE AUTENTICAÇÃO (ATUALIZADAS)
+// ==============================================
+
+app.get('/login', (req, res) => {
+    // Remove a verificação de loggedin para evitar loop
+    res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+app.post('/login', async (req, res) => {
+    const { username, password } = req.body;
+
+    if (username === config.auth.username && await bcrypt.compare(password, config.auth.passwordHash)) {
+        req.session.loggedin = true;
+        req.session.username = username;
+        return res.json({ success: true, redirect: '/' });
+    } else {
+        return res.status(401).json({ success: false, message: 'Credenciais inválidas' });
+    }
+});
+
+app.get('/logout', (req, res) => {
+    req.session.destroy(() => {
+        res.redirect('/login');
+    });
+});
+
+// Rota raiz protegida (ATUALIZADA)
+app.get('/', requireLogin, (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// ==============================================
 // ROTAS DO WHATSAPP
 // ==============================================
 
-// Rota para verificar o status do WhatsApp
-app.get('/api/whatsapp/status', (req, res) => {
+app.get('/api/whatsapp/status', requireLogin, (req, res) => {
     if (whatsappClient && whatsappClient.isConnected()) {
         return res.json({ connected: true });
     } else {
@@ -131,8 +185,7 @@ app.get('/api/whatsapp/status', (req, res) => {
     }
 });
 
-// Rota para forçar a geração de um novo QR Code
-app.post('/api/whatsapp/refresh', (req, res) => {
+app.post('/api/whatsapp/refresh', requireLogin, (req, res) => {
     if (whatsappClient) {
         whatsappClient.logout()
             .then(() => {
@@ -151,46 +204,8 @@ app.post('/api/whatsapp/refresh', (req, res) => {
 });
 
 // ==============================================
-// ROTAS DE AUTENTICAÇÃO E CONFIGURAÇÃO
+// ROTAS DE CONFIGURAÇÃO
 // ==============================================
-
-// Middleware para verificar autenticação
-function requireLogin(req, res, next) {
-    if (!config.auth.requireLogin || req.session.loggedin) {
-        return next();
-    }
-    res.redirect('/login');
-}
-
-// Rotas de autenticação
-app.get('/login', (req, res) => {
-    if (req.session.loggedin) {
-        return res.redirect('/');
-    }
-    res.sendFile(path.join(__dirname, 'public', 'login.html'));
-});
-
-app.post('/login', async (req, res) => {
-    const { username, password } = req.body;
-
-    if (username === config.auth.username && await bcrypt.compare(password, config.auth.passwordHash)) {
-        req.session.loggedin = true;
-        req.session.username = username;
-        res.json({ success: true });
-    } else {
-        res.status(401).json({ success: false, message: 'Credenciais inválidas' });
-    }
-});
-
-app.get('/logout', (req, res) => {
-    req.session.destroy();
-    res.redirect('/login');
-});
-
-// Rota raiz redireciona para login
-app.get('/', (req, res) => {
-    res.redirect('/login');
-});
 
 app.get('/config', requireLogin, (req, res) => {
     res.json(config);
@@ -238,7 +253,6 @@ app.post('/config', requireLogin, async (req, res) => {
     }
 });
 
-// Rota para verificar status da configuração
 app.get('/api/config/status', requireLogin, (req, res) => {
     res.json({
         glpiConfigured: !!config.glpi?.url && !!config.glpi?.appToken && !!config.glpi?.userToken,
@@ -252,7 +266,7 @@ app.get('/api/config/status', requireLogin, (req, res) => {
 });
 
 // ==============================================
-// FUNÇÕES DO GLPI
+// FUNÇÕES DO GLPI (MANTIDAS IGUAIS)
 // ==============================================
 
 async function iniciarSessaoGLPI() {
@@ -549,7 +563,7 @@ function mapearStatus(statusCode) {
 }
 
 // ==============================================
-// BOT WHATSAPP
+// BOT WHATSAPP (MANTIDO IGUAL)
 // ==============================================
 
 async function iniciarBot(tentativa = 1) {
