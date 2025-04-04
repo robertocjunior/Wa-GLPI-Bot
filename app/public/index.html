@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Configuração GLPI</title>
+    <style>body {
+        font-family: Arial, sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+        background-color: #f5f5f5;
+    }
+    .container {
+        background-color: white;
+        padding: 30px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    h1 {
+        color: #333;
+        text-align: center;
+        margin-bottom: 30px;
+    }
+    h2 {
+        color: #444;
+        border-bottom: 1px solid #eee;
+        padding-bottom: 10px;
+        margin-top: 30px;
+    }
+    .form-group {
+        margin-bottom: 20px;
+    }
+    label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: bold;
+        color: #555;
+    }
+    input {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        box-sizing: border-box;
+        font-size: 16px;
+        margin-bottom: 5px;
+    }
+    button {
+        background-color: #4CAF50;
+        color: white;
+        padding: 12px 20px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 16px;
+        margin-top: 10px;
+    }
+    button:hover {
+        background-color: #45a049;
+    }
+    .status {
+        margin-top: 20px;
+        padding: 15px;
+        border-radius: 4px;
+    }
+    .success {
+        background-color: #dff0d8;
+        color: #3c763d;
+        border: 1px solid #d6e9c6;
+    }
+    .error {
+        background-color: #f2dede;
+        color: #a94442;
+        border: 1px solid #ebccd1;
+    }
+    .logout {
+        float: right;
+        color: #d32f2f;
+        text-decoration: none;
+        font-size: 14px;
+    }
+    .logout:hover {
+        text-decoration: underline;
+    }
+    .password-note {
+        font-size: 12px;
+        color: #666;
+        margin-top: -5px;
+        margin-bottom: 10px;
+    }
+    .nav-tabs {
+        display: flex;
+        margin-bottom: 20px;
+        border-bottom: 1px solid #ddd;
+    }
+    .nav-tab {
+        padding: 10px 20px;
+        cursor: pointer;
+        background-color: #f1f1f1;
+        margin-right: 5px;
+        border-radius: 5px 5px 0 0;
+    }
+    .nav-tab.active {
+        background-color: #4CAF50;
+        color: white;
+    }
+    .tab-content {
+        display: none;
+    }
+    .tab-content.active {
+        display: block;
+    }
+    #glpiAlert{
+        display: none;
+    }
+    #apiStatus{
+        display: none;
+    }
+    #passwordStatus{
+        display: none;
+    }</style>
+</head>
+<body>
+    <div class="container">
+        <a href="/logout" class="logout">Sair</a>
+        <h1>Configuração do Sistema</h1>
+
+        <div class="nav-tabs">
+            <div class="nav-tab active" data-tab="api-config">Configuração da API</div>
+            <div class="nav-tab" data-tab="password-config">Alterar Senha</div>
+        </div>
+
+        <!-- Tab 1: Configuração da API -->
+        <div id="api-config" class="tab-content active">
+            <div id="glpiAlert" class="status error">
+                ⚠️ A configuração do GLPI não está completa. O bot não funcionará até que todos os campos sejam preenchidos.
+            </div>
+
+            <h2>Configurações do GLPI</h2>
+            <div class="form-group">
+                <label for="glpiUrl">URL do GLPI:</label>
+                <input type="text" id="glpiUrl" placeholder="Ex: http://glpi/apirest.php">
+            </div>
+
+            <div class="form-group">
+                <label for="appToken">App Token:</label>
+                <input type="text" id="appToken" placeholder="Token da aplicação">
+            </div>
+
+            <div class="form-group">
+                <label for="userToken">User Token:</label>
+                <input type="text" id="userToken" placeholder="Token do usuário">
+            </div>
+
+            <button id="saveApiBtn">Salvar Configurações da API</button>
+            <div id="apiStatus" class="status"></div>
+        </div>
+
+        <!-- Tab 2: Alterar Senha -->
+        <div id="password-config" class="tab-content">
+            <h2>Alterar Credenciais de Acesso</h2>
+            <div class="form-group">
+                <label for="adminUsername">Usuário:</label>
+                <input type="text" id="adminUsername" placeholder="Nome de usuário" readonly>
+            </div>
+
+            <div class="form-group">
+                <label for="newPassword">Nova Senha:</label>
+                <input type="password" id="newPassword" placeholder="Digite a nova senha">
+                <div class="password-note">Mínimo de 8 caracteres</div>
+            </div>
+
+            <div class="form-group">
+                <label for="confirmPassword">Confirmar Nova Senha:</label>
+                <input type="password" id="confirmPassword" placeholder="Digite novamente a nova senha">
+            </div>
+
+            <div class="form-group">
+                <label for="currentPassword">Senha Atual:</label>
+                <input type="password" id="currentPassword" placeholder="Sua senha atual">
+            </div>
+
+            <button id="savePasswordBtn">Alterar Senha</button>
+            <div id="passwordStatus" class="status"></div>
+        </div>
+    </div>
+
+    <script>
+        // Tab navigation
+        document.querySelectorAll('.nav-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                // Remove active class from all tabs and contents
+                document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                
+                // Add active class to clicked tab and corresponding content
+                tab.classList.add('active');
+                const tabId = tab.getAttribute('data-tab');
+                document.getElementById(tabId).classList.add('active');
+            });
+        });
+
+        // Carrega a configuração atual
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                const response = await fetch('/config');
+                const data = await response.json();
+
+                if (data.glpi) {
+                    document.getElementById('glpiUrl').value = data.glpi.url || '';
+                    document.getElementById('appToken').value = data.glpi.appToken || '';
+                    document.getElementById('userToken').value = data.glpi.userToken || '';
+                }
+                document.getElementById('adminUsername').value = data.auth.username || '';
+                
+                if (!data.glpi || !data.glpi.url) {
+                    document.getElementById('glpiAlert').style.display = 'block';
+                }
+            } catch (error) {
+                console.error('Erro ao carregar configuração:', error);
+                showStatus('Erro ao carregar configuração', 'error', 'apiStatus');
+            }
+        });
+
+        // Função para mostrar mensagens de status
+        function showStatus(message, type, elementId) {
+            const statusDiv = document.getElementById(elementId);
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+            statusDiv.style.display = 'block';
+
+            setTimeout(() => {
+                statusDiv.style.display = 'none';
+            }, 5000);
+        }
+
+        // Salva a configuração da API
+        document.getElementById('saveApiBtn').addEventListener('click', async () => {
+            const glpiUrl = document.getElementById('glpiUrl').value;
+            const appToken = document.getElementById('appToken').value;
+            const userToken = document.getElementById('userToken').value;
+
+            // Validação básica
+            if (!glpiUrl || !appToken || !userToken) {
+                return showStatus('Todos os campos são obrigatórios', 'error', 'apiStatus');
+            }
+
+            try {
+                const response = await fetch('/config', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        glpiUrl,
+                        appToken,
+                        userToken
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showStatus('Configuração da API salva com sucesso!', 'success', 'apiStatus');
+                    if (result.glpiConfigured) {
+                        document.getElementById('glpiAlert').style.display = 'none';
+                    }
+                } else {
+                    showStatus(result.message || 'Erro ao salvar configuração', 'error', 'apiStatus');
+                }
+            } catch (error) {
+                console.error('Erro:', error);
+                showStatus('Erro ao conectar com o servidor', 'error', 'apiStatus');
+            }
+        });
+
+        // Altera a senha
+        document.getElementById('savePasswordBtn').addEventListener('click', async () => {
+            const username = document.getElementById('adminUsername').value;
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            const currentPassword = document.getElementById('currentPassword').value;
+
+            // Validações
+            if (!currentPassword) {
+                return showStatus('A senha atual é obrigatória', 'error', 'passwordStatus');
+            }
+            
+            if (newPassword && newPassword.length < 8) {
+                return showStatus('A nova senha deve ter pelo menos 8 caracteres', 'error', 'passwordStatus');
+            }
+            
+            if (newPassword !== confirmPassword) {
+                return showStatus('As senhas não coincidem', 'error', 'passwordStatus');
+            }
+
+            try {
+                const response = await fetch('/config', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        adminUsername: username,
+                        adminPassword: newPassword,
+                        currentPassword
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showStatus('Senha alterada com sucesso!', 'success', 'passwordStatus');
+                    // Limpa os campos de senha
+                    document.getElementById('newPassword').value = '';
+                    document.getElementById('confirmPassword').value = '';
+                    document.getElementById('currentPassword').value = '';
+                } else {
+                    showStatus(result.error || 'Erro ao alterar senha', 'error', 'passwordStatus');
+                }
+            } catch (error) {
+                console.error('Erro:', error);
+                showStatus('Erro ao conectar com o servidor', 'error', 'passwordStatus');
+            }
+        });
+    </script>
+</body>
+</html>
