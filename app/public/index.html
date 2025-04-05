@@ -4,7 +4,122 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Configuração GLPI</title>
-    <link rel="stylesheet" href="index.css">
+    <style>body {
+        font-family: Arial, sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+        background-color: #f5f5f5;
+    }
+    .container {
+        background-color: white;
+        padding: 30px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    h1 {
+        color: #333;
+        text-align: center;
+        margin-bottom: 30px;
+    }
+    h2 {
+        color: #444;
+        border-bottom: 1px solid #eee;
+        padding-bottom: 10px;
+        margin-top: 30px;
+    }
+    .form-group {
+        margin-bottom: 20px;
+    }
+    label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: bold;
+        color: #555;
+    }
+    input {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        box-sizing: border-box;
+        font-size: 16px;
+        margin-bottom: 5px;
+    }
+    button {
+        background-color: #4CAF50;
+        color: white;
+        padding: 12px 20px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 16px;
+        margin-top: 10px;
+    }
+    button:hover {
+        background-color: #45a049;
+    }
+    .status {
+        margin-top: 20px;
+        padding: 15px;
+        border-radius: 4px;
+    }
+    .success {
+        background-color: #dff0d8;
+        color: #3c763d;
+        border: 1px solid #d6e9c6;
+    }
+    .error {
+        background-color: #f2dede;
+        color: #a94442;
+        border: 1px solid #ebccd1;
+    }
+    .logout {
+        float: right;
+        color: #d32f2f;
+        text-decoration: none;
+        font-size: 14px;
+    }
+    .logout:hover {
+        text-decoration: underline;
+    }
+    .password-note {
+        font-size: 12px;
+        color: #666;
+        margin-top: -5px;
+        margin-bottom: 10px;
+    }
+    .nav-tabs {
+        display: flex;
+        margin-bottom: 20px;
+        border-bottom: 1px solid #ddd;
+    }
+    .nav-tab {
+        padding: 10px 20px;
+        cursor: pointer;
+        background-color: #f1f1f1;
+        margin-right: 5px;
+        border-radius: 5px 5px 0 0;
+    }
+    .nav-tab.active {
+        background-color: #4CAF50;
+        color: white;
+    }
+    .tab-content {
+        display: none;
+    }
+    .tab-content.active {
+        display: block;
+    }
+    #glpiAlert{
+        display: none;
+    }
+    #apiStatus{
+        display: none;
+    }
+    #passwordStatus{
+        display: none;
+    }</style>
 </head>
 <body>
     <div class="container">
