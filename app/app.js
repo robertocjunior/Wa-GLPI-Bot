@@ -83,7 +83,7 @@ if (fs.existsSync(configFile)) {
 
 const app = express();
 
-// Configuração de sessão (ATUALIZADA)
+// Configuração de sessão
 app.use(session({
     secret: 'sua_chave_secreta_muito_segura_' + Math.random().toString(36).substring(2),
     resave: false,
@@ -105,6 +105,50 @@ app.use(express.static('public'));
 
 const wss = new WebSocket.Server({ noServer: true });
 
+// Função para enviar logs para todos os clientes WebSocket
+function broadcastLog(message, type = 'info') {
+    const logEntry = {
+        type: 'log',
+        data: {
+            type: type,
+            message: message,
+            timestamp: new Date().toISOString()
+        }
+    };
+    
+    wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify(logEntry));
+        }
+    });
+}
+
+// Redireciona console.log para o WebSocket
+const originalConsoleLog = console.log;
+const originalConsoleError = console.error;
+const originalConsoleWarn = console.warn;
+const originalConsoleInfo = console.info;
+
+console.log = (...args) => {
+    originalConsoleLog.apply(console, args);
+    broadcastLog(args.join(' '), 'info');
+};
+
+console.error = (...args) => {
+    originalConsoleError.apply(console, args);
+    broadcastLog(args.join(' '), 'error');
+};
+
+console.warn = (...args) => {
+    originalConsoleWarn.apply(console, args);
+    broadcastLog(args.join(' '), 'warn');
+};
+
+console.info = (...args) => {
+    originalConsoleInfo.apply(console, args);
+    broadcastLog(args.join(' '), 'info');
+};
+
 // Função para enviar status para todos os clientes WebSocket
 function broadcastStatus() {
     const status = {
@@ -120,7 +164,7 @@ function broadcastStatus() {
 }
 
 // ==============================================
-// MIDDLEWARE DE AUTENTICAÇÃO (ATUALIZADO)
+// MIDDLEWARE DE AUTENTICAÇÃO
 // ==============================================
 
 function requireLogin(req, res, next) {
@@ -142,7 +186,7 @@ function requireLogin(req, res, next) {
 }
 
 // ==============================================
-// ROTAS DE AUTENTICAÇÃO (ATUALIZADAS)
+// ROTAS DE AUTENTICAÇÃO
 // ==============================================
 
 app.get('/login', (req, res) => {
@@ -168,7 +212,7 @@ app.get('/logout', (req, res) => {
     });
 });
 
-// Rota raiz protegida (ATUALIZADA)
+// Rota raiz protegida
 app.get('/', requireLogin, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
@@ -266,7 +310,7 @@ app.get('/api/config/status', requireLogin, (req, res) => {
 });
 
 // ==============================================
-// FUNÇÕES DO GLPI (MANTIDAS IGUAIS)
+// FUNÇÕES DO GLPI
 // ==============================================
 
 async function iniciarSessaoGLPI() {
@@ -563,7 +607,7 @@ function mapearStatus(statusCode) {
 }
 
 // ==============================================
-// BOT WHATSAPP (MANTIDO IGUAL)
+// BOT WHATSAPP
 // ==============================================
 
 async function iniciarBot(tentativa = 1) {

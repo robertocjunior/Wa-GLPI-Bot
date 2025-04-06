@@ -4,185 +4,351 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Configuração GLPI</title>
-    <style>body {
-        font-family: Arial, sans-serif;
-        max-width: 800px;
-        margin: 0 auto;
-        padding: 20px;
-        background-color: #f5f5f5;
-    }
-    .container {
-        background-color: white;
-        padding: 30px;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-    }
-    h1 {
-        color: #333;
-        text-align: center;
-        margin-bottom: 30px;
-    }
-    h2 {
-        color: #444;
-        border-bottom: 1px solid #eee;
-        padding-bottom: 10px;
-        margin-top: 30px;
-    }
-    .form-group {
-        margin-bottom: 20px;
-    }
-    label {
-        display: block;
-        margin-bottom: 8px;
-        font-weight: bold;
-        color: #555;
-    }
-    input {
-        width: 100%;
-        padding: 10px;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        box-sizing: border-box;
-        font-size: 16px;
-        margin-bottom: 5px;
-    }
-    button {
-        background-color: #4CAF50;
-        color: white;
-        padding: 12px 20px;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 16px;
-        margin-top: 10px;
-    }
-    button:hover {
-        background-color: #45a049;
-    }
-    .status {
-        margin-top: 20px;
-        padding: 15px;
-        border-radius: 4px;
-    }
-    .success {
-        background-color: #dff0d8;
-        color: #3c763d;
-        border: 1px solid #d6e9c6;
-    }
-    .error {
-        background-color: #f2dede;
-        color: #a94442;
-        border: 1px solid #ebccd1;
-    }
-    .logout {
-        float: right;
-        color: #d32f2f;
-        text-decoration: none;
-        font-size: 14px;
-    }
-    .logout:hover {
-        text-decoration: underline;
-    }
-    .password-note {
-        font-size: 12px;
-        color: #666;
-        margin-top: -5px;
-        margin-bottom: 10px;
-    }
-    .nav-tabs {
-        display: flex;
-        margin-bottom: 20px;
-        border-bottom: 1px solid #ddd;
-    }
-    .nav-tab {
-        padding: 10px 20px;
-        cursor: pointer;
-        background-color: #f1f1f1;
-        margin-right: 5px;
-        border-radius: 5px 5px 0 0;
-    }
-    .nav-tab.active {
-        background-color: #4CAF50;
-        color: white;
-    }
-    .tab-content {
-        display: none;
-    }
-    .tab-content.active {
-        display: block;
-    }
-    #glpiAlert{
-        display: none;
-    }
-    #apiStatus{
-        display: none;
-    }
-    #passwordStatus{
-        display: none;
-    }</style>
+    <style>
+        :root {
+            --primary-color: #2c3e50;
+            --secondary-color: #34495e;
+            --accent-color: #3498db;
+            --success-color: #2ecc71;
+            --danger-color: #e74c3c;
+            --warning-color: #f39c12;
+            --light-color: #ecf0f1;
+            --dark-color: #2c3e50;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f7fa;
+            color: #333;
+            min-height: 100vh;
+        }
+        
+        .app-container {
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+        
+        .header {
+            background-color: var(--primary-color);
+            color: white;
+            padding: 15px 20px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 1.5rem;
+        }
+        
+        .logout {
+            color: white;
+            text-decoration: none;
+            font-size: 14px;
+            padding: 5px 10px;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+        }
+        
+        .logout:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+            text-decoration: none;
+        }
+        
+        .nav-tabs {
+            display: flex;
+            background-color: var(--secondary-color);
+            padding: 0 20px;
+        }
+        
+        .nav-tab {
+            padding: 15px 25px;
+            cursor: pointer;
+            color: white;
+            font-weight: 500;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+        }
+        
+        .nav-tab:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+        
+        .nav-tab.active {
+            background-color: rgba(255, 255, 255, 0.1);
+            border-bottom-color: var(--accent-color);
+        }
+        
+        .main-content {
+            flex: 1;
+            padding: 20px;
+            background-color: white;
+            margin: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        h2 {
+            color: var(--primary-color);
+            margin-top: 0;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: var(--secondary-color);
+        }
+        
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        input:focus {
+            border-color: var(--accent-color);
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+        }
+        
+        button {
+            background-color: var(--accent-color);
+            color: white;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: background-color 0.3s;
+        }
+        
+        button:hover {
+            background-color: #2980b9;
+        }
+        
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 4px;
+        }
+        
+        .success {
+            background-color: rgba(46, 204, 113, 0.1);
+            color: var(--success-color);
+            border: 1px solid rgba(46, 204, 113, 0.3);
+        }
+        
+        .error {
+            background-color: rgba(231, 76, 60, 0.1);
+            color: var(--danger-color);
+            border: 1px solid rgba(231, 76, 60, 0.3);
+        }
+        
+        .password-note {
+            font-size: 12px;
+            color: #7f8c8d;
+            margin-top: 5px;
+        }
+        
+        /* Estilos específicos para o console */
+        #console-container {
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 250px);
+            background-color: #1e1e1e;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .console-header {
+            background-color: #252526;
+            padding: 10px 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #333;
+        }
+        
+        .console-title {
+            color: #d4d4d4;
+            font-weight: 600;
+            margin: 0;
+        }
+        
+        .console-controls button {
+            padding: 5px 10px;
+            font-size: 12px;
+            background-color: #333;
+            margin-left: 5px;
+        }
+        
+        .console-controls button:hover {
+            background-color: #444;
+        }
+        
+        #console-output {
+            flex: 1;
+            padding: 15px;
+            overflow-y: auto;
+            font-family: 'Consolas', 'Courier New', monospace;
+            color: #d4d4d4;
+            white-space: pre-wrap;
+        }
+        
+        .console-entry {
+            margin-bottom: 8px;
+            line-height: 1.5;
+            font-size: 14px;
+        }
+        
+        .console-timestamp {
+            color: #6a9955;
+            margin-right: 10px;
+        }
+        
+        .console-error {
+            color: #f48771;
+        }
+        
+        .console-warn {
+            color: #ffcc66;
+        }
+        
+        .console-info {
+            color: #9cdcfe;
+        }
+        
+        .console-success {
+            color: #4ec9b0;
+        }
+        
+        /* Layout responsivo */
+        @media (max-width: 768px) {
+            .nav-tabs {
+                overflow-x: auto;
+                padding: 0;
+            }
+            
+            .nav-tab {
+                padding: 12px 15px;
+                white-space: nowrap;
+            }
+            
+            .main-content {
+                margin: 10px;
+                padding: 15px;
+            }
+            
+            #console-container {
+                height: calc(100vh - 200px);
+            }
+        }
+    </style>
 </head>
 <body>
-    <div class="container">
-        <a href="/logout" class="logout">Sair</a>
-        <h1>Configuração do Sistema</h1>
-
+    <div class="app-container">
+        <div class="header">
+            <h1>Configuração do Sistema</h1>
+            <a href="/logout" class="logout">Sair</a>
+        </div>
+        
         <div class="nav-tabs">
             <div class="nav-tab active" data-tab="api-config">Configuração da API</div>
             <div class="nav-tab" data-tab="password-config">Alterar Senha</div>
+            <div class="nav-tab" data-tab="system-console">Console do Sistema</div>
         </div>
+        
+        <div class="main-content">
+            <!-- Tab 1: Configuração da API -->
+            <div id="api-config" class="tab-content active">
 
-        <!-- Tab 1: Configuração da API -->
-        <div id="api-config" class="tab-content active">
-            <div id="glpiAlert" class="status error">
-                ⚠️ A configuração do GLPI não está completa. O bot não funcionará até que todos os campos sejam preenchidos.
+                <h2>Configurações do GLPI</h2>
+                <div class="form-group">
+                    <label for="glpiUrl">URL do GLPI:</label>
+                    <input type="text" id="glpiUrl" placeholder="Ex: http://glpi/apirest.php">
+                </div>
+
+                <div class="form-group">
+                    <label for="appToken">App Token:</label>
+                    <input type="text" id="appToken" placeholder="Token da aplicação">
+                </div>
+
+                <div class="form-group">
+                    <label for="userToken">User Token:</label>
+                    <input type="text" id="userToken" placeholder="Token do usuário">
+                </div>
+
+                <button id="saveApiBtn">Salvar Configurações da API</button>
+                <div id="apiStatus" class="status"></div>
             </div>
 
-            <h2>Configurações do GLPI</h2>
-            <div class="form-group">
-                <label for="glpiUrl">URL do GLPI:</label>
-                <input type="text" id="glpiUrl" placeholder="Ex: http://glpi/apirest.php">
+            <!-- Tab 2: Alterar Senha -->
+            <div id="password-config" class="tab-content">
+                <h2>Alterar Credenciais de Acesso</h2>
+                <div class="form-group">
+                    <label for="adminUsername">Usuário:</label>
+                    <input type="text" id="adminUsername" placeholder="Nome de usuário" readonly>
+                </div>
+
+                <div class="form-group">
+                    <label for="newPassword">Nova Senha:</label>
+                    <input type="password" id="newPassword" placeholder="Digite a nova senha">
+                    <div class="password-note">Mínimo de 8 caracteres</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="confirmPassword">Confirmar Nova Senha:</label>
+                    <input type="password" id="confirmPassword" placeholder="Digite novamente a nova senha">
+                </div>
+
+                <div class="form-group">
+                    <label for="currentPassword">Senha Atual:</label>
+                    <input type="password" id="currentPassword" placeholder="Sua senha atual">
+                </div>
+
+                <button id="savePasswordBtn">Alterar Senha</button>
+                <div id="passwordStatus" class="status"></div>
             </div>
 
-            <div class="form-group">
-                <label for="appToken">App Token:</label>
-                <input type="text" id="appToken" placeholder="Token da aplicação">
+            <!-- Tab 3: Console do Sistema -->
+            <div id="system-console" class="tab-content">
+                <h2>Console do Sistema</h2>
+                <div id="console-container">
+                    <div class="console-header">
+                        <h3 class="console-title">Logs do Sistema</h3>
+                        <div class="console-controls">
+                            <button id="clear-console">Limpar Console</button>
+                            <button id="copy-console">Copiar Tudo</button>
+                        </div>
+                    </div>
+                    <div id="console-output"></div>
+                </div>
             </div>
-
-            <div class="form-group">
-                <label for="userToken">User Token:</label>
-                <input type="text" id="userToken" placeholder="Token do usuário">
-            </div>
-
-            <button id="saveApiBtn">Salvar Configurações da API</button>
-            <div id="apiStatus" class="status"></div>
-        </div>
-
-        <!-- Tab 2: Alterar Senha -->
-        <div id="password-config" class="tab-content">
-            <h2>Alterar Credenciais de Acesso</h2>
-            <div class="form-group">
-                <label for="adminUsername">Usuário:</label>
-                <input type="text" id="adminUsername" placeholder="Nome de usuário" readonly>
-            </div>
-
-            <div class="form-group">
-                <label for="newPassword">Nova Senha:</label>
-                <input type="password" id="newPassword" placeholder="Digite a nova senha">
-                <div class="password-note">Mínimo de 8 caracteres</div>
-            </div>
-
-            <div class="form-group">
-                <label for="confirmPassword">Confirmar Nova Senha:</label>
-                <input type="password" id="confirmPassword" placeholder="Digite novamente a nova senha">
-            </div>
-
-            <div class="form-group">
-                <label for="currentPassword">Senha Atual:</label>
-                <input type="password" id="currentPassword" placeholder="Sua senha atual">
-            </div>
-
-            <button id="savePasswordBtn">Alterar Senha</button>
-            <div id="passwordStatus" class="status"></div>
         </div>
     </div>
 
@@ -198,8 +364,26 @@
                 tab.classList.add('active');
                 const tabId = tab.getAttribute('data-tab');
                 document.getElementById(tabId).classList.add('active');
+                
+                // Ajusta a altura do console quando a aba é selecionada
+                if (tabId === 'system-console') {
+                    setTimeout(() => {
+                        adjustConsoleHeight();
+                    }, 50);
+                }
             });
         });
+
+        // Ajusta a altura do console
+        function adjustConsoleHeight() {
+            const consoleContainer = document.getElementById('console-container');
+            const headerHeight = document.querySelector('.header').offsetHeight;
+            const tabsHeight = document.querySelector('.nav-tabs').offsetHeight;
+            const mainContentPadding = 40; // 20px top + 20px bottom
+            
+            const availableHeight = window.innerHeight - headerHeight - tabsHeight - mainContentPadding - 40;
+            consoleContainer.style.height = `${availableHeight}px`;
+        }
 
         // Carrega a configuração atual
         document.addEventListener('DOMContentLoaded', async () => {
@@ -213,10 +397,105 @@
                     document.getElementById('userToken').value = data.glpi.userToken || '';
                 }
                 document.getElementById('adminUsername').value = data.auth.username || '';
+
+                // Configuração do WebSocket para o console
+                const consoleOutput = document.getElementById('console-output');
+                const clearConsoleBtn = document.getElementById('clear-console');
+                const copyConsoleBtn = document.getElementById('copy-console');
                 
-                if (!data.glpi || !data.glpi.url) {
-                    document.getElementById('glpiAlert').style.display = 'block';
+                const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+                const wsUrl = wsProtocol + window.location.host;
+                const socket = new WebSocket(wsUrl);
+                
+                // Função para adicionar entrada no console
+                function addConsoleEntry(entry) {
+                    const entryElement = document.createElement('div');
+                    entryElement.className = 'console-entry';
+                    
+                    const timestamp = document.createElement('span');
+                    timestamp.className = 'console-timestamp';
+                    timestamp.textContent = new Date(entry.timestamp).toLocaleTimeString();
+                    entryElement.appendChild(timestamp);
+                    
+                    const message = document.createElement('span');
+                    
+                    // Aplica classes CSS baseadas no tipo de mensagem
+                    if (entry.type === 'error') {
+                        message.className = 'console-error';
+                    } else if (entry.type === 'warn') {
+                        message.className = 'console-warn';
+                    } else if (entry.type === 'info') {
+                        message.className = 'console-info';
+                    } else if (entry.type === 'success') {
+                        message.className = 'console-success';
+                    }
+                    
+                    message.textContent = entry.message;
+                    entryElement.appendChild(message);
+                    
+                    consoleOutput.appendChild(entryElement);
+                    consoleOutput.scrollTop = consoleOutput.scrollHeight;
                 }
+                
+                // Limpar console
+                clearConsoleBtn.addEventListener('click', () => {
+                    consoleOutput.innerHTML = '';
+                });
+                
+                // Copiar conteúdo do console
+                copyConsoleBtn.addEventListener('click', () => {
+                    const range = document.createRange();
+                    range.selectNode(consoleOutput);
+                    window.getSelection().removeAllRanges();
+                    window.getSelection().addRange(range);
+                    document.execCommand('copy');
+                    window.getSelection().removeAllRanges();
+                    
+                    // Feedback visual
+                    const originalText = copyConsoleBtn.textContent;
+                    copyConsoleBtn.textContent = 'Copiado!';
+                    setTimeout(() => {
+                        copyConsoleBtn.textContent = originalText;
+                    }, 2000);
+                });
+                
+                // Lidar com mensagens WebSocket
+                socket.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'log') {
+                        addConsoleEntry(data.data);
+                    } else if (data.type === 'qr') {
+                        // Adiciona o QR Code como uma mensagem de log também
+                        addConsoleEntry({
+                            type: 'info',
+                            message: 'QR Code recebido para autenticação no WhatsApp',
+                            timestamp: new Date().toISOString()
+                        });
+                    }
+                };
+                
+                // Lidar com erros de conexão
+                socket.onerror = (error) => {
+                    addConsoleEntry({
+                        type: 'error',
+                        message: 'Erro na conexão com o servidor de logs: ' + error.message,
+                        timestamp: new Date().toISOString()
+                    });
+                };
+                
+                // Quando a conexão é fechada
+                socket.onclose = () => {
+                    addConsoleEntry({
+                        type: 'warn',
+                        message: 'Conexão com o servidor de logs encerrada',
+                        timestamp: new Date().toISOString()
+                    });
+                };
+
+                // Ajusta a altura do console quando a página é carregada
+                adjustConsoleHeight();
+                window.addEventListener('resize', adjustConsoleHeight);
+
             } catch (error) {
                 console.error('Erro ao carregar configuração:', error);
                 showStatus('Erro ao carregar configuração', 'error', 'apiStatus');
@@ -263,9 +542,6 @@
 
                 if (result.success) {
                     showStatus('Configuração da API salva com sucesso!', 'success', 'apiStatus');
-                    if (result.glpiConfigured) {
-                        document.getElementById('glpiAlert').style.display = 'none';
-                    }
                 } else {
                     showStatus(result.message || 'Erro ao salvar configuração', 'error', 'apiStatus');
                 }
