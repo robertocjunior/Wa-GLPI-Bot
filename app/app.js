@@ -911,7 +911,7 @@ function startServer(port) {
         // Inicia o bot após um pequeno delay
         setTimeout(() => {
             iniciarBot(1);
-        }, 2000);
+        }, 50000);
     });
 
     server.on('error', (err) => {
