@@ -762,14 +762,13 @@ async function iniciarBot(tentativa = 1) {
                 await new Promise(resolve => setTimeout(resolve, 2000));
                 await whatsappClient.simulateTyping(sender, false)
 
-                await whatsappClient.sendText(sender, "⚠️ Ferramenta em fase de desenvolvimento, em caso de erro favor reportar ao suporte. ⚠️");
-                await whatsappClient.sendText(sender, "Para sair, a qualquer momento digite *#*.");
                 await whatsappClient.sendText(sender,
                     "Olá, como posso te ajudar?\n\n" +
                     "1️⃣ - Abrir chamado\n" +
                     "2️⃣ - Acompanhar chamado\n" +
                     "0️⃣ - Sair"
                 );
+                await whatsappClient.sendText(sender, "Para sair, a qualquer momento digite *#*.");
                 return;
             }
 
