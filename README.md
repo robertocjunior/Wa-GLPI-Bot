@@ -1,4 +1,3 @@
-```markdown
 # Documentação para Uso do Container Wa-GLPI-Bot
 
 ## Visão Geral
