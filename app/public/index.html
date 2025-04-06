@@ -180,11 +180,12 @@
         #console-container {
             display: flex;
             flex-direction: column;
-            height: calc(100vh - 200px);
+            height: calc(100vh - 10px);
             min-height: 400px;
             background-color: #1e1e1e;
             border-radius: 8px;
             overflow: hidden;
+            position: relative;
         }
 
         .console-header {
@@ -200,17 +201,6 @@
             color: #d4d4d4;
             font-weight: 600;
             margin: 0;
-        }
-
-        .console-controls button {
-            padding: 5px 10px;
-            font-size: 12px;
-            background-color: #333;
-            margin-left: 5px;
-        }
-
-        .console-controls button:hover {
-            background-color: #444;
         }
 
         #console-output {
@@ -229,11 +219,17 @@
             padding: 1px 0;
             white-space: pre;
             word-break: keep-all;
+            display: flex;
         }
 
         .console-timestamp {
             color: #6a9955;
             margin-right: 10px;
+            flex-shrink: 0;
+        }
+
+        .console-message {
+            flex-grow: 1;
         }
 
         .console-error {
@@ -250,6 +246,25 @@
 
         .console-success {
             color: #4ec9b0;
+        }
+
+        .scroll-to-bottom {
+            position: absolute;
+            right: 20px;
+            bottom: 60px;
+            background-color: #444;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 5px 10px;
+            cursor: pointer;
+            opacity: 0;
+            transition: opacity 0.3s;
+            z-index: 10;
+        }
+
+        .scroll-to-bottom.visible {
+            opacity: 1;
         }
 
         /* Layout responsivo */
@@ -273,6 +288,11 @@
                 height: calc(100vh - 180px);
                 min-height: 300px;
             }
+
+            .scroll-to-bottom {
+                right: 10px;
+                bottom: 50px;
+            }
         }
     </style>
 </head>
@@ -293,7 +313,6 @@
         <div class="main-content">
             <!-- Tab 1: Configuração da API -->
             <div id="api-config" class="tab-content active">
-
                 <h2>Configurações do GLPI</h2>
                 <div class="form-group">
                     <label for="glpiUrl">URL do GLPI:</label>
@@ -352,6 +371,7 @@
                             <button id="copy-console">Copiar Tudo</button>
                         </div>
                     </div>
+                    <button id="scroll-to-bottom" class="scroll-to-bottom">Novas mensagens ▼</button>
                     <div id="console-output"></div>
                 </div>
             </div>
@@ -359,6 +379,13 @@
     </div>
 
     <script>
+        // Variáveis globais para controle do console
+        let newMessagesAvailable = false;
+        let scrollBottomButton = document.getElementById('scroll-to-bottom');
+        let userHasScrolled = false;
+        let clearConsoleBtn = document.getElementById('clear-console');
+        let copyConsoleBtn = document.getElementById('copy-console');
+
         // Tab navigation
         document.querySelectorAll('.nav-tab').forEach(tab => {
             tab.addEventListener('click', () => {
@@ -399,10 +426,69 @@
             
             // Usa a maior entre a altura disponível e a altura mínima
             consoleContainer.style.height = `${Math.max(availableHeight, minHeight)}px`;
-            
-            // Rolagem automática para o final
+        }
+
+        // Função para limpar códigos de escape ANSI
+        function cleanAnsiCodes(text) {
+            return text.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '');
+        }
+
+        // Função para dividir mensagens em múltiplas linhas e adicionar timestamp a cada uma
+        function processMessageForConsole(message) {
+            // Limpa códigos ANSI primeiro
+            const cleanMessage = cleanAnsiCodes(message);
+            // Divide por quebras de linha
+            return cleanMessage.split('\n');
+        }
+
+        // Função modificada para adicionar entrada no console com controle de scroll
+        function addConsoleEntry(entry) {
             const consoleOutput = document.getElementById('console-output');
-            consoleOutput.scrollTop = consoleOutput.scrollHeight;
+            const isScrolledToBottom = consoleOutput.scrollHeight - consoleOutput.clientHeight <= consoleOutput.scrollTop + 1;
+            const timestamp = new Date(entry.timestamp).toLocaleTimeString();
+
+            // Processa a mensagem para lidar com quebras de linha e códigos ANSI
+            const messageLines = processMessageForConsole(entry.message);
+
+            messageLines.forEach((line, index) => {
+                // Cria um novo elemento para cada linha
+                const entryElement = document.createElement('div');
+                entryElement.className = 'console-entry';
+
+                // Adiciona timestamp em todas as linhas
+                const timestampSpan = document.createElement('span');
+                timestampSpan.className = 'console-timestamp';
+                timestampSpan.textContent = timestamp;
+                entryElement.appendChild(timestampSpan);
+
+                const messageSpan = document.createElement('span');
+                messageSpan.className = 'console-message';
+
+                // Aplica classes CSS baseadas no tipo de mensagem
+                if (entry.type === 'error') {
+                    messageSpan.classList.add('console-error');
+                } else if (entry.type === 'warn') {
+                    messageSpan.classList.add('console-warn');
+                } else if (entry.type === 'info') {
+                    messageSpan.classList.add('console-info');
+                } else if (entry.type === 'success') {
+                    messageSpan.classList.add('console-success');
+                }
+
+                // Se a linha estiver vazia, adiciona um espaço para manter o alinhamento
+                messageSpan.textContent = line.trim() === '' ? ' ' : line;
+                entryElement.appendChild(messageSpan);
+
+                consoleOutput.appendChild(entryElement);
+            });
+
+            // Só rola para baixo se já estiver no final e o usuário não tiver feito scroll manual
+            if (isScrolledToBottom && !userHasScrolled) {
+                consoleOutput.scrollTop = consoleOutput.scrollHeight;
+            } else if (!isScrolledToBottom) {
+                newMessagesAvailable = true;
+                scrollBottomButton.classList.add('visible');
+            }
         }
 
         // Carrega a configuração atual
@@ -420,46 +506,17 @@
 
                 // Configuração do WebSocket para o console
                 const consoleOutput = document.getElementById('console-output');
-                const clearConsoleBtn = document.getElementById('clear-console');
-                const copyConsoleBtn = document.getElementById('copy-console');
 
                 const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
                 const wsUrl = wsProtocol + window.location.host;
                 const socket = new WebSocket(wsUrl);
 
-                // Função para adicionar entrada no console
-                function addConsoleEntry(entry) {
-                    const entryElement = document.createElement('div');
-                    entryElement.className = 'console-entry';
-
-                    const timestamp = document.createElement('span');
-                    timestamp.className = 'console-timestamp';
-                    timestamp.textContent = new Date(entry.timestamp).toLocaleTimeString();
-                    entryElement.appendChild(timestamp);
-
-                    const message = document.createElement('span');
-
-                    // Aplica classes CSS baseadas no tipo de mensagem
-                    if (entry.type === 'error') {
-                        message.className = 'console-error';
-                    } else if (entry.type === 'warn') {
-                        message.className = 'console-warn';
-                    } else if (entry.type === 'info') {
-                        message.className = 'console-info';
-                    } else if (entry.type === 'success') {
-                        message.className = 'console-success';
-                    }
-
-                    message.textContent = entry.message;
-                    entryElement.appendChild(message);
-
-                    consoleOutput.appendChild(entryElement);
-                    consoleOutput.scrollTop = consoleOutput.scrollHeight;
-                }
-
                 // Limpar console
                 clearConsoleBtn.addEventListener('click', () => {
                     consoleOutput.innerHTML = '';
+                    newMessagesAvailable = false;
+                    scrollBottomButton.classList.remove('visible');
+                    userHasScrolled = false;
                 });
 
                 // Copiar conteúdo do console
@@ -479,27 +536,83 @@
                     }, 2000);
                 });
 
+                // Botão para ir para o final
+                scrollBottomButton.addEventListener('click', () => {
+                    consoleOutput.scrollTop = consoleOutput.scrollHeight;
+                    newMessagesAvailable = false;
+                    scrollBottomButton.classList.remove('visible');
+                    userHasScrolled = false;
+                });
+
+                // Detecta quando o usuário faz scroll manual
+                consoleOutput.addEventListener('scroll', function() {
+                    const isScrolledToBottom = this.scrollHeight - this.clientHeight <= this.scrollTop + 1;
+                    
+                    if (!isScrolledToBottom) {
+                        userHasScrolled = true;
+                    } else {
+                        userHasScrolled = false;
+                    }
+                    
+                    if (isScrolledToBottom && newMessagesAvailable) {
+                        newMessagesAvailable = false;
+                        scrollBottomButton.classList.remove('visible');
+                    }
+                });
+
                 // Lidar com mensagens WebSocket
                 socket.onmessage = (event) => {
-                    const data = JSON.parse(event.data);
-                    if (data.type === 'log') {
-                        addConsoleEntry(data.data);
-                    } else if (data.type === 'qr') {
-                        // Adiciona o QR Code como uma mensagem de log também
+                    try {
+                        const data = JSON.parse(event.data);
+                        if (data.type === 'log') {
+                            addConsoleEntry(data.data);
+                        } else if (data.type === 'qr') {
+                            // Adiciona a mensagem sobre o QR Code
+                            addConsoleEntry({
+                                type: 'info',
+                                message: 'QR Code recebido para autenticação no WhatsApp',
+                                timestamp: new Date().toISOString()
+                            });
+                            
+                            // Processa o QR Code linha por linha
+                            const qrLines = processMessageForConsole(data.data.qr);
+                            const timestamp = new Date().toLocaleTimeString();
+                            const isScrolledToBottom = consoleOutput.scrollHeight - consoleOutput.clientHeight <= consoleOutput.scrollTop + 1;
+
+                            qrLines.forEach((line) => {
+                                const qrElement = document.createElement('div');
+                                qrElement.className = 'console-entry';
+                                qrElement.style.whiteSpace = 'pre';
+                                qrElement.style.fontFamily = 'monospace';
+                                
+                                // Adiciona timestamp
+                                const timestampSpan = document.createElement('span');
+                                timestampSpan.className = 'console-timestamp';
+                                timestampSpan.textContent = timestamp;
+                                qrElement.appendChild(timestampSpan);
+
+                                const qrContent = document.createElement('span');
+                                qrContent.className = 'console-message';
+                                qrContent.textContent = line;
+                                qrElement.appendChild(qrContent);
+                                
+                                consoleOutput.appendChild(qrElement);
+                            });
+                            
+                            if (isScrolledToBottom && !userHasScrolled) {
+                                consoleOutput.scrollTop = consoleOutput.scrollHeight;
+                            } else if (!isScrolledToBottom) {
+                                newMessagesAvailable = true;
+                                scrollBottomButton.classList.add('visible');
+                            }
+                        }
+                    } catch (error) {
+                        console.error('Erro ao processar mensagem:', error);
                         addConsoleEntry({
-                            type: 'info',
-                            message: 'QR Code recebido para autenticação no WhatsApp',
+                            type: 'error',
+                            message: 'Erro ao processar mensagem: ' + error.message,
                             timestamp: new Date().toISOString()
                         });
-                        
-                        // Adiciona o QR Code diretamente ao console
-                        const qrElement = document.createElement('div');
-                        qrElement.className = 'console-entry';
-                        qrElement.style.whiteSpace = 'pre';
-                        qrElement.style.fontFamily = 'monospace';
-                        qrElement.textContent = data.data.qr;
-                        consoleOutput.appendChild(qrElement);
-                        consoleOutput.scrollTop = consoleOutput.scrollHeight;
                     }
                 };
 
@@ -636,5 +749,4 @@
         });
     </script>
 </body>
-
 </html>
