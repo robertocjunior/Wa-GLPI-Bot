@@ -1,4 +1,4 @@
-# Documentação para Uso do Container Wa-GLPI-Bot
+# Wa-GLPI-Bot
 
 ## Visão Geral
 
