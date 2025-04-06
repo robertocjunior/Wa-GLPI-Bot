@@ -1,5 +1,9 @@
 # Wa-GLPI-Bot
 
+<img src="app/public/GLPI-WA.png" alt="Archon Logo" />
+
+<div align="center" style="margin-top: 20px;margin-bottom: 30px">
+
 ## Visão Geral
 
 O **Wa-GLPI-Bot** é um sistema que integra o WhatsApp com o GLPI (Gerenciador Livre de Parque Informatizado), permitindo:
