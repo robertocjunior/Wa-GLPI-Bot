@@ -1,6 +1,8 @@
 # Wa-GLPI-Bot
 
-<img style= "width: 50%;" src="app/public/GLPI-WA.png" alt="Archon Logo" />
+<p align="center">
+  <img src="app/public/GLPI-WA.png" alt="Logo" width="300"/>
+</p>
 
 <div style="margin-top: 20px;margin-bottom: 30px">
 
