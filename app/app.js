@@ -12,13 +12,6 @@ const FormData = require('form-data');
 const WebSocket = require('ws');
 
 // ==============================================
-// VARIÁVEIS DE CONTROLE DE ESTADO
-// ==============================================
-let botIniciado = false;
-let botEmProcessoDeInicializacao = false;
-let conexaoAtiva = false;
-
-// ==============================================
 // CONFIGURAÇÃO INICIAL
 // ==============================================
 
@@ -160,9 +153,7 @@ console.info = (...args) => {
 function broadcastStatus() {
     const status = {
         type: 'status',
-        connected: whatsappClient ? whatsappClient.isConnected() : false,
-        botIniciado: botIniciado,
-        botEmProcessoDeInicializacao: botEmProcessoDeInicializacao
+        connected: whatsappClient ? whatsappClient.isConnected() : false
     };
 
     wss.clients.forEach(wsClient => {
@@ -231,40 +222,29 @@ app.get('/', requireLogin, (req, res) => {
 // ==============================================
 
 app.get('/api/whatsapp/status', requireLogin, (req, res) => {
-    res.json({
-        connected: whatsappClient ? whatsappClient.isConnected() : false,
-        botIniciado: botIniciado,
-        botEmProcessoDeInicializacao: botEmProcessoDeInicializacao
-    });
+    if (whatsappClient && whatsappClient.isConnected()) {
+        return res.json({ connected: true });
+    } else {
+        return res.json({ connected: false });
+    }
 });
 
-// ==============================================
-// FUNÇÕES DE CONTROLE DO BOT
-// ==============================================
-
-async function reiniciarBot() {
-    if (whatsappClient) {
-        try {
-            console.log('🔄 Encerrando cliente WhatsApp atual...');
-            await whatsappClient.kill();
-        } catch (e) {
-            console.error('Erro ao encerrar cliente WhatsApp:', e);
-        }
-    }
-    
-    botIniciado = false;
-    whatsappClient = null;
-    console.log('🔄 Reiniciando bot...');
-    await iniciarBot();
-}
-
 app.post('/api/whatsapp/refresh', requireLogin, (req, res) => {
-    reiniciarBot()
-        .then(() => res.json({ success: true }))
-        .catch(err => {
-            console.error('Erro ao recarregar WhatsApp:', err);
-            res.status(500).json({ success: false, error: err.message });
-        });
+    if (whatsappClient) {
+        whatsappClient.logout()
+            .then(() => {
+                return whatsappClient.initialize();
+            })
+            .then(() => {
+                return res.json({ success: true });
+            })
+            .catch(err => {
+                console.error('Erro ao recarregar WhatsApp:', err);
+                return res.status(500).json({ success: false, error: err.message });
+            });
+    } else {
+        return res.status(400).json({ success: false, error: 'Client WhatsApp não inicializado' });
+    }
 });
 
 // ==============================================
@@ -309,7 +289,7 @@ app.post('/config', requireLogin, async (req, res) => {
     });
 
     // Se o GLPI foi configurado agora, tenta iniciar o bot
-    if (glpiUrl && appToken && userToken && !botIniciado) {
+    if (glpiUrl && appToken && userToken) {
         console.log('🔄 GLPI configurado - Tentando iniciar o bot...');
         setTimeout(() => {
             iniciarBot(1); // Reinicia com tentativa 1
@@ -631,21 +611,10 @@ function mapearStatus(statusCode) {
 // ==============================================
 
 async function iniciarBot(tentativa = 1) {
-    // Verifica se já está em processo de inicialização ou já iniciado
-    if (botIniciado || botEmProcessoDeInicializacao) {
-        console.log('⚠️ Bot já está em execução ou em processo de inicialização. Ignorando comando.');
-        return;
-    }
-
-    botEmProcessoDeInicializacao = true;
-    console.log('🔄 Iniciando processo de inicialização do bot...');
-
     // Verificação inicial da configuração do GLPI
     if (!config.glpi || !config.glpi.url || !config.glpi.appToken || !config.glpi.userToken) {
         console.error('❌ Bot não iniciado - Configuração do GLPI incompleta');
         console.error('Por favor, configure o GLPI através da interface web');
-
-        botEmProcessoDeInicializacao = false;
 
         // Verifica novamente após um tempo
         const intervalo = Math.min(10000 * tentativa, 60000);
@@ -739,8 +708,7 @@ async function iniciarBot(tentativa = 1) {
         // Evento para capturar o QR Code
         whatsappClient.onStateChanged(async (state) => {
             console.log('Estado do WhatsApp alterado:', state);
-            conexaoAtiva = (state === 'CONNECTED');
-            
+
             if (state === 'qr') {
                 const qrCode = await whatsappClient.getQRCode();
                 console.log('QR Code recebido');
@@ -760,17 +728,6 @@ async function iniciarBot(tentativa = 1) {
             broadcastStatus();
         });
 
-        // Verificação periódica da conexão
-        const healthCheckInterval = setInterval(() => {
-            if (botIniciado && whatsappClient && !conexaoAtiva) {
-                console.log('⚠️ Conexão perdida, reiniciando bot...');
-                clearInterval(healthCheckInterval);
-                reiniciarBot();
-            }
-        }, 30000);
-
-        botEmProcessoDeInicializacao = false;
-        botIniciado = true;
         console.log('🤖 Bot iniciado com sucesso!');
 
         whatsappClient.onMessage(async message => {
@@ -969,10 +926,7 @@ async function iniciarBot(tentativa = 1) {
 
     } catch (error) {
         console.error("❌ Erro no bot:", error);
-        botEmProcessoDeInicializacao = false;
-        botIniciado = false;
-        
-        console.log("🔄 Tentando reiniciar o bot...");
+        console.log("🔄 Reiniciando o bot...");
         setTimeout(() => {
             iniciarBot(tentativa + 1);
         }, 5000);
@@ -1000,7 +954,7 @@ function startServer(port) {
         // Inicia o bot após um pequeno delay
         setTimeout(() => {
             iniciarBot(1);
-        }, 5000);
+        }, 50000);
     });
 
     server.on('error', (err) => {
@@ -1012,15 +966,6 @@ function startServer(port) {
         }
     });
 }
-
-// Encerramento adequado
-process.on('SIGINT', async () => {
-    console.log('🛑 Recebido SIGINT. Encerrando aplicação...');
-    if (whatsappClient) {
-        await whatsappClient.kill();
-    }
-    process.exit(0);
-});
 
 // Inicia o servidor
 startServer(PORT);
