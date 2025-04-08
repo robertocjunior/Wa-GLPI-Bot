@@ -368,6 +368,7 @@
                     <div class="console-header">
                         <h3 class="console-title">Logs do Sistema</h3>
                         <div class="console-controls">
+                            <button id="clear-console">Limpar Console</button>
                             <button id="copy-console">Copiar Tudo</button>
                         </div>
                     </div>
@@ -383,6 +384,7 @@
         let newMessagesAvailable = false;
         let scrollBottomButton = document.getElementById('scroll-to-bottom');
         let userHasScrolled = false;
+        let clearConsoleBtn = document.getElementById('clear-console');
         let copyConsoleBtn = document.getElementById('copy-console');
 
         // Tab navigation
