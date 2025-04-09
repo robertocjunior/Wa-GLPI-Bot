@@ -242,4 +242,3 @@ docker run -d ... # com os mesmos parâmetros anteriores
 
 Contribuições são bem-vindas no repositório GitHub:  
 [https://github.com/robertocjunior/Wa-GLPI-Bot](https://github.com/robertocjunior/Wa-GLPI-Bot)
-```
