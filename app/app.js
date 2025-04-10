@@ -816,6 +816,7 @@ async function iniciarBot(tentativa = 1) {
             } else if (estadoUsuario[sender].estado === "aguardar_anexos") {
                 if (message.body === "0") {
                     await whatsappClient.sendText(sender, "Agora, com quem estou falando?");
+                    await hatsappClient.sendText(sender, "Diga apenas seu primeiro nome, sem cargo ou setor");
                     estadoUsuario[sender].estado = "aguardar_nome";
                 } else if (message.mimetype) {
                     try {
