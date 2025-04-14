@@ -23,6 +23,15 @@ O **Wa-GLPI-Bot** é um sistema que integra o WhatsApp com o GLPI (Gerenciador L
 - Acesso a uma instância GLPI com API REST habilitada  
 
 ---
+## Instalação
+
+clone o repositório em uma pasta da maquina host que irá rodar o serviçio, entre na pasta do repositório e execute o comando
+
+```CLI
+Docker-compose up -d
+```
+
+---
 
 ## Configuração Inicial
 
