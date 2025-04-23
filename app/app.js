@@ -680,7 +680,8 @@ async function iniciarBot(tentativa = 1) {
             useChrome: false,
             skipUpdateCheck: true,
             logConsole: false,
-            executablePath: '/usr/bin/chromium-browser',
+            //executablePath: '/usr/bin/chromium-browser',
+            executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', // Caminho padrão do Chrome no Windows
             qrLogSkip: false,
             qrFormat: 'base64',
             multiDevice: false,
