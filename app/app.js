@@ -214,7 +214,6 @@ app.post('/api/whatsapp/refresh', requireLogin, (req, res) => {
         whatsappClient.logout()
             .then(() => {
                 console.log('Logout realizado, tentando reinicializar...');
-                // As opções de create devem ser as mesmas de iniciarBot
                 return create({
                     sessionId: 'my-session', headless: true, qrTimeout: 0, authTimeout: 0, useChrome: false, 
                     skipUpdateCheck: true, logConsole: false, 
@@ -299,14 +298,14 @@ app.post('/config', requireLogin, async (req, res) => {
                 console.log('Reiniciando o bot existente...');
                 whatsappClient.kill().then(() => { 
                     whatsappClient = null; 
-                    iniciarBot(1, true); // Force restart
+                    iniciarBot(1, true); 
                 }).catch(err => {
                     console.error('Erro ao matar cliente antigo, prosseguindo com nova instância:', err);
                     whatsappClient = null;
-                    iniciarBot(1, true); // Force restart
+                    iniciarBot(1, true); 
                 });
             } else {
-                iniciarBot(1, true); // Force restart
+                iniciarBot(1, true); 
             }
         }, 2000);
     } else {
@@ -396,7 +395,7 @@ async function consultarChamadoGLPI(ticket_id) {
 async function criarChamado(nomeRequisitante, descricaoBreve, descricaoDetalhada, anexosPaths = [], specificUserId = null) {
     let session_token = null;
     const arquivosParaAnexarSeparadamente = [];
-    const arquivosProcessadosParaExclusao = []; // Para garantir que todos os arquivos sejam excluídos
+    const arquivosProcessadosParaExclusao = []; 
 
     try {
         session_token = await iniciarSessaoGLPI();
@@ -433,11 +432,15 @@ async function criarChamado(nomeRequisitante, descricaoBreve, descricaoDetalhada
              console.log(`ℹ️ Usando ID de usuário GLPI fornecido diretamente: ${specificUserId}`);
         }
 
-        let conteudoChamadoHTML = `<p>${descricaoDetalhada.replace(/\n/g, '<br>')}</p>`; // Converte quebras de linha para <br>
+        let conteudoChamadoHTML = `<p>${descricaoDetalhada.replace(/\n/g, '<br>')}</p>`; 
 
         for (const anexoPath of anexosPaths) {
-            arquivosProcessadosParaExclusao.push(anexoPath); // Adiciona à lista de exclusão
+            arquivosProcessadosParaExclusao.push(anexoPath); 
             const mimeType = mime.lookup(anexoPath);
+            
+            // Adiciona todos os arquivos para serem anexados separadamente
+            arquivosParaAnexarSeparadamente.push(anexoPath);
+
             if (mimeType && mimeType.startsWith('image/')) {
                 try {
                     const fileContentBase64 = fs.readFileSync(anexoPath, { encoding: 'base64' });
@@ -446,12 +449,10 @@ async function criarChamado(nomeRequisitante, descricaoBreve, descricaoDetalhada
                     console.log(`🖼️ Imagem ${path.basename(anexoPath)} incorporada no chamado.`);
                 } catch (imgError) {
                     console.error(`❌ Erro ao ler ou incorporar imagem ${anexoPath}:`, imgError);
-                    // Se falhar em incorporar, adiciona para anexo separado como fallback
-                    arquivosParaAnexarSeparadamente.push(anexoPath);
+                    // A imagem já foi adicionada a arquivosParaAnexarSeparadamente, então será tratada como anexo normal
                 }
-            } else {
-                arquivosParaAnexarSeparadamente.push(anexoPath);
             }
+            // Não há 'else' aqui, pois todos os arquivos (imagens ou não) já foram adicionados a arquivosParaAnexarSeparadamente
         }
         
         conteudoChamadoHTML += `<p><br>---<br>Enviado por: ${nomeRequisitante} (via WhatsApp)</p>`;
@@ -459,10 +460,10 @@ async function criarChamado(nomeRequisitante, descricaoBreve, descricaoDetalhada
         const ticketPayload = {
             input: {
                 name: descricaoBreve, 
-                content: conteudoChamadoHTML, // Usar o HTML formatado
-                "itilcategories_id": 0, // Categoria Raiz por padrão, ajuste se necessário
-                "type": 2, // 1 para Requisição, 2 para Incidente. Ajuste conforme sua necessidade.
-                "urgency": 3, // 1=Muito Baixa, 2=Baixa, 3=Média, 4=Alta, 5=Muito Alta. Ajuste.
+                content: conteudoChamadoHTML, 
+                "itilcategories_id": 0, 
+                "type": 2, 
+                "urgency": 3, 
             }
         };
 
@@ -479,7 +480,7 @@ async function criarChamado(nomeRequisitante, descricaoBreve, descricaoDetalhada
         const ticketId = response.data.id;
 
         if (arquivosParaAnexarSeparadamente.length > 0) {
-            console.log(`📎 Iniciando upload de ${arquivosParaAnexarSeparadamente.length} anexo(s) não-imagem para o chamado ID ${ticketId}...`);
+            console.log(`📎 Iniciando upload de ${arquivosParaAnexarSeparadamente.length} anexo(s) para o chamado ID ${ticketId}...`);
             for (const anexoPath of arquivosParaAnexarSeparadamente) {
                 if (fs.existsSync(anexoPath)) { 
                     await anexarArquivoAoChamado(ticketId, anexoPath, session_token);
@@ -497,14 +498,12 @@ async function criarChamado(nomeRequisitante, descricaoBreve, descricaoDetalhada
         );
         return null;
     } finally {
-        // Limpa TODOS os arquivos processados (incorporados ou anexados)
         if (arquivosProcessadosParaExclusao.length > 0) {
             console.log(`🗑️ Limpando ${arquivosProcessadosParaExclusao.length} arquivo(s) temporário(s)...`);
             for (const anexoPath of arquivosProcessadosParaExclusao) {
                  if (fs.existsSync(anexoPath)) {
                     try {
                         fs.unlinkSync(anexoPath);
-                        // console.log(`🗑️ Arquivo local removido: ${anexoPath}`); // Log pode ser verboso
                     } catch (errUnlink) {
                         console.error(`❌ Erro ao remover arquivo local ${anexoPath}:`, errUnlink);
                     }
@@ -684,7 +683,7 @@ async function iniciarBot(tentativa = 1, forceRestart = false) {
             return;
         }
         console.log("⏳ Bot existente não conectado, aguardando finalização da tentativa atual ou reinício forçado.");
-        return; // Evita múltiplas instâncias se uma já estiver tentando conectar
+        return; 
     }
 
     if (whatsappClient && forceRestart) {
@@ -710,7 +709,7 @@ async function iniciarBot(tentativa = 1, forceRestart = false) {
             } catch (e) {
                 console.error('❌ Erro ao recarregar configuração antes de nova tentativa do bot:', e);
             }
-            iniciarBot(tentativa + 1, false); // Não força restart na retentativa automática
+            iniciarBot(tentativa + 1, false); 
         }, intervalo);
         return;
     }
@@ -741,7 +740,7 @@ async function iniciarBot(tentativa = 1, forceRestart = false) {
         const intervaloErro = Math.min(15000 * Math.pow(1.5, tentativa -1), 600000); 
         console.log(`🔄 Reiniciando o bot devido a erro em ${intervaloErro / 1000} segundos...`);
         setTimeout(() => {
-            iniciarBot(tentativa + 1, false); // Não força restart na retentativa automática
+            iniciarBot(tentativa + 1, false); 
         }, intervaloErro);
     }
 }
@@ -776,7 +775,7 @@ function setupWhatsappListeners() {
             broadcastLog(`WhatsApp desconectado: ${state}. Será feita uma tentativa de reconexão.`, 'warn');
             if (whatsappClient && typeof whatsappClient.kill === 'function') {
                 whatsappClient.kill().then(() => {
-                    whatsappClient = null; // Garante que será recriado
+                    whatsappClient = null; 
                     console.log("Cliente anterior finalizado. Agendando reinício do bot...");
                     setTimeout(() => iniciarBot(1, true), 5000); 
                 }).catch(err => {
@@ -890,7 +889,7 @@ async function handleMessageLogic(client, message) {
                 fs.writeFileSync(filePath, mediaData);
                 console.log(`📎 Anexo salvo localmente: ${filePath} para ${sender}`);
                 if (!dados.anexos) dados.anexos = [];
-                dados.anexos.push(filePath); // Salva o caminho do arquivo
+                dados.anexos.push(filePath); 
                 await client.sendText(sender, `✅ ${dados.anexos.length} anexo(s) recebido(s). Envie outro ou digite *0* para continuar.`);
             } catch (error) {
                 console.error(`❌ Erro ao processar anexo de ${sender}:`, error);
@@ -918,7 +917,7 @@ async function handleMessageLogic(client, message) {
 
         if (resultadoChamado && resultadoChamado.multipleUsersFound) {
             dados.potentialGlpiUsers = resultadoChamado.users; 
-            dados.descricaoBreve = resultadoChamado.descricaoBreve; // Preserva os dados para a próxima etapa
+            dados.descricaoBreve = resultadoChamado.descricaoBreve; 
             dados.descricaoDetalhada = resultadoChamado.descricaoDetalhada;
             dados.anexos = resultadoChamado.anexos;
             dados.nomeRequisitante = resultadoChamado.originalNomeRequisitante;
@@ -948,7 +947,6 @@ async function handleMessageLogic(client, message) {
         const selection = parseInt(body, 10);
         if (isNaN(selection) || selection < 1 || selection > dados.potentialGlpiUsers.length) {
             await client.sendText(sender, `❌ Opção inválida. Por favor, digite um número entre 1 e ${dados.potentialGlpiUsers.length}.`);
-            // Reenviar lista pode ser útil
             return;
         }
         const selectedUser = dados.potentialGlpiUsers[selection - 1];
@@ -1035,9 +1033,9 @@ function startServer(portToTry) {
                 console.log("🚀 Configuração do GLPI encontrada. Iniciando o bot WhatsApp...");
                 iniciarBot(1); 
             } else {
-                console.warn("⚠️ Bot WhatsApp não iniciado: Configuração do GLPI incompleta.");
+                console.warn("⚠️ Bot WhatsApp não iniciado: Configuração do GLPI está incompleta.");
                 broadcastLog("Bot não iniciado: Configuração do GLPI incompleta.", "warn");
-                iniciarBot(1); // Tenta iniciar mesmo assim, pois iniciarBot tem seu próprio loop de verificação de config
+                iniciarBot(1); 
             }
         }, 5000); 
     }).on('error', (err) => {
