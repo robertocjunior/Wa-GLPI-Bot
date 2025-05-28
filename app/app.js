@@ -16,6 +16,7 @@ const WebSocket = require('ws');
 // ==============================================
 
 const pastaDestino = './anexos';
+const SESSION_DATA_PATH = './whatsapp_session_data'; // Pasta para guardar os dados da sessão do WhatsApp
 const configFile = './glpi_config.json';
 let config = null;
 let whatsappClient = null;
@@ -23,6 +24,11 @@ let whatsappClient = null;
 // Cria a pasta de destino se não existir
 if (!fs.existsSync(pastaDestino)) {
     fs.mkdirSync(pastaDestino);
+}
+
+// Cria a pasta de dados da sessão do WhatsApp se não existir
+if (!fs.existsSync(SESSION_DATA_PATH)) {
+    fs.mkdirSync(SESSION_DATA_PATH);
 }
 
 // Tratamento de erros não capturados
@@ -215,10 +221,10 @@ app.post('/api/whatsapp/refresh', requireLogin, (req, res) => {
             .then(() => {
                 console.log('Logout realizado, tentando reinicializar...');
                 return create({
-                    sessionId: 'my-session', headless: true, qrTimeout: 0, authTimeout: 0, useChrome: false, 
-                    skipUpdateCheck: true, logConsole: false, 
+                    sessionId: 'my-session', headless: true, qrTimeout: 0, authTimeout: 0, 
+                    sessionDataPath: SESSION_DATA_PATH, skipUpdateCheck: true, logConsole: false, 
                     executablePath: process.env.CHROME_BIN || 'C:/Program Files/Google/Chrome/Application/chrome.exe', 
-                    qrLogSkip: false, qrFormat: 'base64', multiDevice: false, 
+                    qrLogSkip: false, qrFormat: 'base64', multiDevice: true, 
                     args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-accelerated-2d-canvas','--no-first-run','--no-zygote','--disable-gpu'],
                     launchTimeout: 120000, waitForRipeSession: true, killProcessOnBrowserClose: true,
                 });
@@ -612,43 +618,53 @@ function mapearStatus(statusCode) {
 // ==============================================
 // BOT WHATSAPP
 // ==============================================
-let messageProcessing = false; 
+let userMessageProcessing = {}; // Alterado de flag global para objeto por usuário
 
 async function processMessageSafe(client, message) {
-    if (messageProcessing) {
-        console.warn(`⚠️ Processamento de mensagem já em curso para ${message.from}.`);
-        return;
+    const sender = message.from;
+
+    if (userMessageProcessing[sender]) {
+        // Se a mensagem atual é uma mídia E o usuário está no estado de anexos,
+        // permite que ela seja processada. Isso é para lidar com álbuns onde
+        // múltiplas mensagens de mídia chegam rapidamente.
+        if (estadoUsuario[sender]?.estado === "abrir_chamado_anexos" && message.mimetype) {
+            console.log(`ℹ️  Processamento de anexo para ${sender} (álbum/múltiplos). Permitindo passagem...`);
+        } else {
+            console.warn(`⚠️  Processamento de mensagem anterior ainda em curso para ${sender}. Nova mensagem (tipo: ${message.type}, body: "${message.body ? message.body.substring(0,30) : ''}") ignorada por enquanto.`);
+            return; // Ignora a nova mensagem se uma já estiver em processamento e não for um anexo esperado
+        }
     }
-    messageProcessing = true;
+
+    userMessageProcessing[sender] = true;
     try {
         await handleMessageLogic(client, message); 
     } catch (error) {
-        console.error("❌ Erro crítico no processamento da mensagem:", error);
+        console.error("❌ Erro crítico no processamento da mensagem para", sender, ":", error);
         try {
-            await client.sendText(message.from, "❌ Ocorreu um erro inesperado. Por favor, tente novamente mais tarde ou digite # para recomeçar.");
+            await sendAndLogText(client, sender, "❌ Ocorreu um erro inesperado. Por favor, tente novamente mais tarde ou digite # para recomeçar.");
         } catch (sendError) {
             console.error("❌ Falha ao enviar mensagem de erro para o usuário:", sendError);
         }
-        delete usuariosAtendidos[message.from];
-        delete estadoUsuario[message.from];
-        if (timeoutSessoes[message.from]) {
-            clearTimeout(timeoutSessoes[message.from]);
-            delete timeoutSessoes[message.from];
+        delete usuariosAtendidos[sender];
+        delete estadoUsuario[sender];
+        if (timeoutSessoes[sender]) {
+            clearTimeout(timeoutSessoes[sender]);
+            delete timeoutSessoes[sender];
         }
     } finally {
-        messageProcessing = false;
+        userMessageProcessing[sender] = false;
     }
 }
 
 const timeoutSessoes = {};
 const TEMPO_INATIVIDADE = 15 * 60 * 1000; 
 let usuariosAtendidos = {};
-let estadoUsuario = {}; 
+let estadoUsuario = {};
 
 async function encerrarConversaInativa(client, sender) {
     try {
         if (usuariosAtendidos[sender] || estadoUsuario[sender]) { 
-            await client.sendText(sender, "⏳ Sua sessão foi encerrada automaticamente devido à inatividade. Se precisar de ajuda, envie qualquer mensagem para iniciar uma nova conversa.");
+            await sendAndLogText(client, sender, "⏳ Sua sessão foi encerrada automaticamente devido à inatividade. Se precisar de ajuda, envie qualquer mensagem para iniciar uma nova conversa.");
             delete usuariosAtendidos[sender];
             delete estadoUsuario[sender];
             if (timeoutSessoes[sender]) {
@@ -719,10 +735,10 @@ async function iniciarBot(tentativa = 1, forceRestart = false) {
 
     try {
         whatsappClient = await create({
-            sessionId: 'my-session', headless: true, qrTimeout: 0, authTimeout: 0, useChrome: false,
-            skipUpdateCheck: true, logConsole: false, 
+            sessionId: 'my-session', headless: true, qrTimeout: 0, authTimeout: 0,
+            sessionDataPath: SESSION_DATA_PATH, skipUpdateCheck: true, logConsole: false, 
             executablePath: process.env.CHROME_BIN || 'C:/Program Files/Google/Chrome/Application/chrome.exe', 
-            qrLogSkip: false, qrFormat: 'base64', multiDevice: false, 
+            qrLogSkip: false, qrFormat: 'base64', multiDevice: true, 
             args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-accelerated-2d-canvas','--no-first-run','--no-zygote','--disable-gpu'],
             launchTimeout: 120000, waitForRipeSession: true, killProcessOnBrowserClose: true,
         });
@@ -792,17 +808,49 @@ function setupWhatsappListeners() {
     });
 
     whatsappClient.onMessage(async message => {
+        // Log de todas as mensagens recebidas
+        const senderIdentifier = message.sender.pushname || message.sender.id || message.from;
+        let logMessage = `💬 Mensagem recebida`;
+
+        if (message.isGroupMsg) {
+            const groupName = message.chat.name || message.chat.id;
+            logMessage += ` no grupo "${groupName}" de "${senderIdentifier}"`;
+        } else {
+            logMessage += ` de "${senderIdentifier}"`;
+        }
+
+        if (message.body) {
+            logMessage += `: "${message.body.trim()}"`;
+        } else if (message.caption) {
+            logMessage += ` (legenda): "${message.caption.trim()}"`;
+        } else if (message.mimetype) {
+            logMessage += ` [Mídia: ${message.mimetype}]`;
+        } else if (message.type && message.type !== 'chat') { // 'chat' é o tipo padrão para texto, já coberto por 'body'
+            logMessage += ` [Tipo: ${message.type}]`;
+        } else {
+            logMessage += ` [Conteúdo não textual ou tipo desconhecido]`;
+        }
+        console.log(logMessage);
+
         await processMessageSafe(whatsappClient, message);
     });
     
     whatsappClient.onIncomingCall(async (call) => {
         console.log("📞 Chamada recebida, rejeitando:", call);
         try {
-            await whatsappClient.rejectCall(call.id);
-            await whatsappClient.sendText(call.peerJid, "Desculpe, não posso atender chamadas. Por favor, envie uma mensagem de texto.");
+            // Não há necessidade de logar a rejeição em si como uma "mensagem enviada"
+            // mas a mensagem de texto subsequente sim.
+            await whatsappClient.rejectCall(call.id); 
+            await sendAndLogText(whatsappClient, call.peerJid, "Desculpe, não posso atender chamadas. Por favor, envie uma mensagem de texto.");
         } catch (rejectError) { console.error("❌ Erro ao rejeitar chamada:", rejectError); }
     });
     console.log('🤖 Ouvintes configurados. Bot pronto para receber mensagens assim que conectado.');
+}
+
+// Função auxiliar para enviar mensagem e logar
+async function sendAndLogText(clientInstance, recipientId, textContent) {
+    console.log(`📤 Enviando mensagem para "${recipientId}": "${textContent}"`);
+    await clientInstance.sendText(recipientId, textContent);
 }
 
 async function handleMessageLogic(client, message) {
@@ -818,7 +866,7 @@ async function handleMessageLogic(client, message) {
         delete timeoutSessoes[sender];
         delete usuariosAtendidos[sender]; 
         delete estadoUsuario[sender];     
-        await client.sendText(sender, "🔚 Atendimento encerrado. Se precisar de algo mais, basta enviar uma mensagem. 👋");
+        await sendAndLogText(client, sender, "🔚 Atendimento encerrado. Se precisar de algo mais, basta enviar uma mensagem. 👋");
         console.log(`🛑 Atendimento encerrado manualmente para ${sender}`);
         return;
     }
@@ -829,13 +877,13 @@ async function handleMessageLogic(client, message) {
         await client.simulateTyping(sender, true);
         await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 1000));
         await client.simulateTyping(sender, false);
-        await client.sendText(sender,
+        await sendAndLogText(client, sender,
             `Olá ${senderName}, sou seu assistente virtual para suporte GLPI. Como posso te ajudar hoje?\n\n` +
             "1️⃣ - Abrir novo chamado\n" +
             "2️⃣ - Acompanhar chamado existente\n" +
             "0️⃣ - Encerrar conversa"
         );
-        await client.sendText(sender, "A qualquer momento, digite *#* ou *cancelar* para encerrar e voltar ao início.");
+        await sendAndLogText(client, sender, "A qualquer momento, digite *#* ou *cancelar* para encerrar e voltar ao início.");
         reiniciarTimerInatividade(client, sender); 
         return;
     }
@@ -847,39 +895,46 @@ async function handleMessageLogic(client, message) {
         if (body === "1") {
             estadoUsuario[sender].estado = "abrir_chamado_descricao_breve";
             dados.anexos = []; 
-            await client.sendText(sender, "📝 Entendido! Para abrir um novo chamado, por favor, descreva o problema em poucas palavras (será o título do chamado).");
+            await sendAndLogText(client, sender, "📝 Entendido! Para abrir um novo chamado, por favor, descreva o problema em poucas palavras (será o título do chamado).");
         } else if (body === "2") {
             estadoUsuario[sender].estado = "acompanhar_chamado_id";
-            await client.sendText(sender, "🔍 Para acompanhar um chamado, por favor, informe o número (ID) do seu chamado.");
+            await sendAndLogText(client, sender, "🔍 Para acompanhar um chamado, por favor, informe o número (ID) do seu chamado.");
         } else if (body === "0") {
-            await client.sendText(sender, "👋 Obrigado pelo contato! Até a próxima.");
+            await sendAndLogText(client, sender, "👋 Obrigado pelo contato! Até a próxima.");
             delete usuariosAtendidos[sender]; delete estadoUsuario[sender];
             if (timeoutSessoes[sender]) clearTimeout(timeoutSessoes[sender]); delete timeoutSessoes[sender];
         } else {
-            await client.sendText(sender, "❌ Opção inválida. Por favor, escolha uma das opções do menu (1, 2 ou 0).");
+            await sendAndLogText(client, sender, "❌ Opção inválida. Por favor, escolha uma das opções do menu (1, 2 ou 0).");
         }
         return;
     }
 
     if (currentState === "abrir_chamado_descricao_breve") {
         if (!body) { 
-            await client.sendText(sender, "⚠️ O título do chamado não pode ser vazio. Por favor, descreva o problema em poucas palavras.");
+            await sendAndLogText(client, sender, "⚠️ O título do chamado não pode ser vazio. Por favor, descreva o problema em poucas palavras.");
             return; 
         }
         dados.descricaoBreve = body;
         estadoUsuario[sender].estado = "abrir_chamado_descricao_detalhada";
-        await client.sendText(sender, "📄 Ótimo. Agora, por favor, descreva detalhadamente o problema.");
+        await sendAndLogText(client, sender, "📄 Ótimo. Agora, por favor, descreva detalhadamente o problema.");
     }
     else if (currentState === "abrir_chamado_descricao_detalhada") {
         if (!body) { 
-            await client.sendText(sender, "⚠️ A descrição detalhada do chamado não pode ser vazia. Por favor, forneça os detalhes do problema.");
+            await sendAndLogText(client, sender, "⚠️ A descrição detalhada do chamado não pode ser vazia. Por favor, forneça os detalhes do problema.");
             return; 
         }
         dados.descricaoDetalhada = body;
         estadoUsuario[sender].estado = "abrir_chamado_anexos";
-        await client.sendText(sender, "🖼️ Se desejar, envie agora arquivos ou imagens como anexo. Quando terminar de enviar os anexos (ou se não houver), digite *0* para prosseguir.");
+        await sendAndLogText(client, sender, "🖼️ Se desejar, envie agora arquivos ou imagens como anexo. Quando terminar de enviar os anexos (ou se não houver), digite *0* para prosseguir.");
     }
     else if (currentState === "abrir_chamado_anexos") {
+        if (message.type === 'album') {
+            // É uma mensagem de contêiner de álbum, apenas aguarde as mídias individuais.
+            // Não envie "Entrada inválida".
+            console.log(`ℹ️ Mensagem do tipo 'album' recebida de ${sender}. Aguardando mídias individuais.`);
+            return; // Retorna para não processar mais nada desta mensagem de 'album'
+        }
+
         if (message.mimetype) { 
             try {
                 const mediaData = await decryptMedia(message);
@@ -890,25 +945,26 @@ async function handleMessageLogic(client, message) {
                 console.log(`📎 Anexo salvo localmente: ${filePath} para ${sender}`);
                 if (!dados.anexos) dados.anexos = [];
                 dados.anexos.push(filePath); 
-                await client.sendText(sender, `✅ ${dados.anexos.length} anexo(s) recebido(s). Envie outro ou digite *0* para continuar.`);
+                await sendAndLogText(client, sender, `✅ ${dados.anexos.length} anexo(s) recebido(s). Envie outro ou digite *0* para continuar.`);
             } catch (error) {
                 console.error(`❌ Erro ao processar anexo de ${sender}:`, error);
-                await client.sendText(sender, "❌ Ops! Ocorreu um erro ao processar seu anexo. Tente enviar novamente ou digite *0* para continuar sem este anexo.");
+                await sendAndLogText(client, sender, "❌ Ops! Ocorreu um erro ao processar seu anexo. Tente enviar novamente ou digite *0* para continuar sem este anexo.");
             }
         } else if (body === "0") {
             estadoUsuario[sender].estado = "abrir_chamado_nome_requisitante";
-            await client.sendText(sender, `👤 Para finalizar, por favor, informe seu nome completo para identificação no GLPI.`);
+            await sendAndLogText(client, sender, `👤 Para finalizar, por favor, informe seu nome completo para identificação no GLPI.`);
         } else {
-            await client.sendText(sender, "❓ Entrada inválida. Por favor, envie um anexo ou digite *0* para prosseguir.");
+            // Se não for 'album' (já tratado), nem mídia com mimetype, nem "0", então é inválido.
+            await sendAndLogText(client, sender, "❓ Entrada inválida. Por favor, envie um anexo ou digite *0* para prosseguir.");
         }
     }
     else if (currentState === "abrir_chamado_nome_requisitante") {
         if (!body) { 
-            await client.sendText(sender, "⚠️ O nome do requisitante não pode ser vazio. Por favor, informe seu nome completo.");
+            await sendAndLogText(client, sender, "⚠️ O nome do requisitante não pode ser vazio. Por favor, informe seu nome completo.");
             return; 
         }
         dados.nomeRequisitante = body; 
-        await client.sendText(sender, "⏳ Processando sua solicitação e buscando seu usuário no GLPI...");
+        await sendAndLogText(client, sender, "⏳ Processando sua solicitação e buscando seu usuário no GLPI...");
         await client.simulateTyping(sender, true);
         const resultadoChamado = await criarChamado(
             dados.nomeRequisitante, dados.descricaoBreve, dados.descricaoDetalhada, dados.anexos || []
@@ -930,15 +986,15 @@ async function handleMessageLogic(client, message) {
                 userListMessage += `${index + 1} - ${displayName}\n`;
             });
             userListMessage += "\nDigite o número correspondente ou *#* para cancelar.";
-            await client.sendText(sender, userListMessage);
+            await sendAndLogText(client, sender, userListMessage);
         } else if (resultadoChamado && resultadoChamado.id) { 
-            await client.sendText(sender, `✅ Chamado criado com sucesso! O número do seu chamado é: *${resultadoChamado.id}*.\n\nObrigado! Se precisar de mais alguma coisa, é só chamar.`);
+            await sendAndLogText(client, sender, `✅ Chamado criado com sucesso! O número do seu chamado é: *${resultadoChamado.id}*.\n\nObrigado! Se precisar de mais alguma coisa, é só chamar.`);
             delete estadoUsuario[sender].dadosTemporarios;
             estadoUsuario[sender].estado = "aguardando_opcao_inicial"; 
             await new Promise(resolve => setTimeout(resolve, 1500));
-            await client.sendText(sender, "Como posso te ajudar agora?\n\n1️⃣ - Abrir novo chamado\n2️⃣ - Acompanhar chamado existente\n0️⃣ - Encerrar conversa");
+            await sendAndLogText(client, sender, "Como posso te ajudar agora?\n\n1️⃣ - Abrir novo chamado\n2️⃣ - Acompanhar chamado existente\n0️⃣ - Encerrar conversa");
         } else { 
-            await client.sendText(sender, "❌ Desculpe, ocorreu um erro e não foi possível criar seu chamado. Por favor, tente novamente mais tarde.");
+            await sendAndLogText(client, sender, "❌ Desculpe, ocorreu um erro e não foi possível criar seu chamado. Por favor, tente novamente mais tarde.");
             delete estadoUsuario[sender].dadosTemporarios;
             estadoUsuario[sender].estado = "aguardando_opcao_inicial";
         }
@@ -946,33 +1002,33 @@ async function handleMessageLogic(client, message) {
     else if (currentState === "abrir_chamado_selecionar_usuario_glpi") {
         const selection = parseInt(body, 10);
         if (isNaN(selection) || selection < 1 || selection > dados.potentialGlpiUsers.length) {
-            await client.sendText(sender, `❌ Opção inválida. Por favor, digite um número entre 1 e ${dados.potentialGlpiUsers.length}.`);
+            await sendAndLogText(client, sender, `❌ Opção inválida. Por favor, digite um número entre 1 e ${dados.potentialGlpiUsers.length}.`);
             return;
         }
         const selectedUser = dados.potentialGlpiUsers[selection - 1];
-        await client.sendText(sender, `⏳ Você selecionou "${selectedUser.firstName}${selectedUser.lastNameOrFullName ? ' '+selectedUser.lastNameOrFullName : ''}". Criando o chamado...`);
+        await sendAndLogText(client, sender, `⏳ Você selecionou "${selectedUser.firstName}${selectedUser.lastNameOrFullName ? ' '+selectedUser.lastNameOrFullName : ''}". Criando o chamado...`);
         await client.simulateTyping(sender, true);
         const resultadoFinalChamado = await criarChamado(
             dados.nomeRequisitante, dados.descricaoBreve, dados.descricaoDetalhada, dados.anexos || [], selectedUser.id 
         );
         await client.simulateTyping(sender, false);
         if (resultadoFinalChamado && resultadoFinalChamado.id) {
-            await client.sendText(sender, `✅ Chamado criado com sucesso e associado a você! O número do seu chamado é: *${resultadoFinalChamado.id}*.\n\nObrigado!`);
+            await sendAndLogText(client, sender, `✅ Chamado criado com sucesso e associado a você! O número do seu chamado é: *${resultadoFinalChamado.id}*.\n\nObrigado!`);
         } else {
-            await client.sendText(sender, "❌ Desculpe, ocorreu um erro ao tentar criar o chamado após a seleção.");
+            await sendAndLogText(client, sender, "❌ Desculpe, ocorreu um erro ao tentar criar o chamado após a seleção.");
         }
         delete estadoUsuario[sender].dadosTemporarios; 
         estadoUsuario[sender].estado = "aguardando_opcao_inicial";
         await new Promise(resolve => setTimeout(resolve, 1500));
-        await client.sendText(sender, "Como posso te ajudar agora?\n\n1️⃣ - Abrir novo chamado\n2️⃣ - Acompanhar chamado existente\n0️⃣ - Encerrar conversa");
+        await sendAndLogText(client, sender, "Como posso te ajudar agora?\n\n1️⃣ - Abrir novo chamado\n2️⃣ - Acompanhar chamado existente\n0️⃣ - Encerrar conversa");
     }
     else if (currentState === "acompanhar_chamado_id") {
         if (!body || !/^\d+$/.test(body)) { 
-            await client.sendText(sender, "⚠️ Por favor, informe um número de chamado válido.");
+            await sendAndLogText(client, sender, "⚠️ Por favor, informe um número de chamado válido.");
             return;
         }
         const ticketId = body;
-        await client.sendText(sender, `⏳ Consultando informações do chamado *#${ticketId}*...`);
+        await sendAndLogText(client, sender, `⏳ Consultando informações do chamado *#${ticketId}*...`);
         await client.simulateTyping(sender, true);
         const ticketData = await consultarChamadoGLPI(ticketId);
         await client.simulateTyping(sender, false);
@@ -982,16 +1038,16 @@ async function handleMessageLogic(client, message) {
                 `📌 *Status:* ${ticketData.status}`;
             if (ticketData.tecnico && ticketData.tecnico !== "Não atribuído") mensagem += `\n👤 *Técnico Responsável:* ${ticketData.tecnico}`;
             mensagem += `\n\nComo posso te ajudar agora?\n1️⃣ Abrir novo chamado\n2️⃣ Acompanhar outro chamado\n0️⃣ Encerrar`;
-            await client.sendText(sender, mensagem);
+            await sendAndLogText(client, sender, mensagem);
         } else {
-            await client.sendText(sender, `❌ Não foi possível encontrar informações para o chamado *#${ticketId}*.`);
-            await client.sendText(sender, "Como posso te ajudar agora?\n1️⃣ Abrir novo chamado\n2️⃣ Acompanhar outro chamado\n0️⃣ Encerrar");
+            await sendAndLogText(client, sender, `❌ Não foi possível encontrar informações para o chamado *#${ticketId}*.`);
+            await sendAndLogText(client, sender, "Como posso te ajudar agora?\n1️⃣ Abrir novo chamado\n2️⃣ Acompanhar outro chamado\n0️⃣ Encerrar");
         }
         estadoUsuario[sender].estado = "aguardando_opcao_inicial";
     }
      else {
         console.warn(`⚠️ Estado não reconhecido ou fluxo quebrado para ${sender}: ${currentState}. Redefinindo.`);
-        await client.sendText(sender, "❌ Ops! Algo não saiu como esperado. Vamos recomeçar.");
+        await sendAndLogText(client, sender, "❌ Ops! Algo não saiu como esperado. Vamos recomeçar.");
         delete usuariosAtendidos[sender]; delete estadoUsuario[sender];
         if (timeoutSessoes[sender]) clearTimeout(timeoutSessoes[sender]); delete timeoutSessoes[sender];
         return; 
