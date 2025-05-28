@@ -894,7 +894,8 @@ async function handleMessageLogic(client, message) {
     if (currentState === "aguardando_opcao_inicial") {
         if (body === "1") {
             estadoUsuario[sender].estado = "abrir_chamado_descricao_breve";
-            dados.anexos = []; 
+            // Initialize dadosTemporarios for the new ticket creation process
+            estadoUsuario[sender].dadosTemporarios = { anexos: [] };
             await sendAndLogText(client, sender, "📝 Entendido! Para abrir um novo chamado, por favor, descreva o problema em poucas palavras (será o título do chamado).");
         } else if (body === "2") {
             estadoUsuario[sender].estado = "acompanhar_chamado_id";
