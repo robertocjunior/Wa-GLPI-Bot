@@ -66,14 +66,13 @@ function loadOrCreateConfig() {
 // Carrega a configuração
 config = loadOrCreateConfig();
 
-// Carrega configuração existente
+// Carrega configuração existente (redundant with the above but kept for safety if logic changes)
 if (fs.existsSync(configFile)) {
     try {
         const savedConfig = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-        config = { ...config, ...savedConfig };
-        console.log('✅ Configuração carregada:', config);
+        config = { ...config, ...savedConfig }; // Merge, savedConfig takes precedence
     } catch (e) {
-        console.error('❌ Erro ao carregar configuração:', e);
+        console.error('❌ Erro ao carregar configuração existente:', e);
     }
 }
 
@@ -83,15 +82,14 @@ if (fs.existsSync(configFile)) {
 
 const app = express();
 
-// Configuração de sessão
 app.use(session({
     secret: 'sua_chave_secreta_muito_segura_' + Math.random().toString(36).substring(2),
     resave: false,
     saveUninitialized: false,
     cookie: {
-        secure: false, // Defina como true se estiver usando HTTPS
-        maxAge: 24 * 60 * 60 * 1000, // 24 horas
-        httpOnly: true // Adicionado para segurança
+        secure: false, 
+        maxAge: 24 * 60 * 60 * 1000, 
+        httpOnly: true 
     }
 }));
 
@@ -105,7 +103,6 @@ app.use(express.static('public'));
 
 const wss = new WebSocket.Server({ noServer: true });
 
-// Função para enviar logs para todos os clientes WebSocket
 function broadcastLog(message, type = 'info') {
     const logEntry = {
         type: 'log',
@@ -115,7 +112,6 @@ function broadcastLog(message, type = 'info') {
             timestamp: new Date().toISOString()
         }
     };
-    
     wss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
             client.send(JSON.stringify(logEntry));
@@ -123,7 +119,6 @@ function broadcastLog(message, type = 'info') {
     });
 }
 
-// Redireciona console.log para o WebSocket
 const originalConsoleLog = console.log;
 const originalConsoleError = console.error;
 const originalConsoleWarn = console.warn;
@@ -133,29 +128,24 @@ console.log = (...args) => {
     originalConsoleLog.apply(console, args);
     broadcastLog(args.join(' '), 'info');
 };
-
 console.error = (...args) => {
     originalConsoleError.apply(console, args);
     broadcastLog(args.join(' '), 'error');
 };
-
 console.warn = (...args) => {
     originalConsoleWarn.apply(console, args);
     broadcastLog(args.join(' '), 'warn');
 };
-
 console.info = (...args) => {
     originalConsoleInfo.apply(console, args);
     broadcastLog(args.join(' '), 'info');
 };
 
-// Função para enviar status para todos os clientes WebSocket
 function broadcastStatus() {
     const status = {
         type: 'status',
-        connected: whatsappClient ? whatsappClient.isConnected() : false
+        connected: !!(whatsappClient && typeof whatsappClient.isConnected === 'function' && whatsappClient.isConnected())
     };
-
     wss.clients.forEach(wsClient => {
         if (wsClient.readyState === WebSocket.OPEN) {
             wsClient.send(JSON.stringify(status));
@@ -168,35 +158,26 @@ function broadcastStatus() {
 // ==============================================
 
 function requireLogin(req, res, next) {
-    // Rotas públicas que não requerem autenticação
     const publicRoutes = ['/login', '/logout', '/auth'];
-
-    // Se não requer login ou se está autenticado ou é rota pública, continua
     if (!config.auth.requireLogin || req.session.loggedin || publicRoutes.includes(req.path)) {
         return next();
     }
-
-    // Se a requisição é para a API, retorna erro JSON
     if (req.originalUrl.startsWith('/api')) {
         return res.status(401).json({ success: false, message: 'Não autenticado' });
     }
-
-    // Caso contrário, redireciona para login
     return res.redirect('/login');
 }
 
 // ==============================================
-// ROTAS DE AUTENTICAÇÃO
+// ROTAS DE AUTENTICAÇÃO E DASHBOARD
 // ==============================================
 
 app.get('/login', (req, res) => {
-    // Remove a verificação de loggedin para evitar loop
     res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
 app.post('/login', async (req, res) => {
     const { username, password } = req.body;
-
     if (username === config.auth.username && await bcrypt.compare(password, config.auth.passwordHash)) {
         req.session.loggedin = true;
         req.session.username = username;
@@ -212,17 +193,16 @@ app.get('/logout', (req, res) => {
     });
 });
 
-// Rota raiz protegida
 app.get('/', requireLogin, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // ==============================================
-// ROTAS DO WHATSAPP
+// ROTAS DO WHATSAPP (API para Dashboard)
 // ==============================================
 
 app.get('/api/whatsapp/status', requireLogin, (req, res) => {
-    if (whatsappClient && whatsappClient.isConnected()) {
+    if (whatsappClient && typeof whatsappClient.isConnected === 'function' && whatsappClient.isConnected()) {
         return res.json({ connected: true });
     } else {
         return res.json({ connected: false });
@@ -230,25 +210,45 @@ app.get('/api/whatsapp/status', requireLogin, (req, res) => {
 });
 
 app.post('/api/whatsapp/refresh', requireLogin, (req, res) => {
-    if (whatsappClient) {
+    if (whatsappClient && typeof whatsappClient.isConnected === 'function' && whatsappClient.isConnected()) {
         whatsappClient.logout()
             .then(() => {
-                return whatsappClient.initialize();
+                console.log('Logout realizado, tentando reinicializar...');
+                // As opções de create devem ser as mesmas de iniciarBot
+                return create({
+                    sessionId: 'my-session', headless: true, qrTimeout: 0, authTimeout: 0, useChrome: false, 
+                    skipUpdateCheck: true, logConsole: false, 
+                    executablePath: process.env.CHROME_BIN || 'C:/Program Files/Google/Chrome/Application/chrome.exe', 
+                    qrLogSkip: false, qrFormat: 'base64', multiDevice: false, 
+                    args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-accelerated-2d-canvas','--no-first-run','--no-zygote','--disable-gpu'],
+                    launchTimeout: 120000, waitForRipeSession: true, killProcessOnBrowserClose: true,
+                });
             })
-            .then(() => {
-                return res.json({ success: true });
+            .then(newClient => {
+                whatsappClient = newClient; 
+                setupWhatsappListeners(); 
+                console.log('Cliente WhatsApp recarregado e ouvintes reconfigurados.');
+                broadcastStatus();
+                return res.json({ success: true, message: "Cliente WhatsApp recarregado." });
             })
             .catch(err => {
                 console.error('Erro ao recarregar WhatsApp:', err);
                 return res.status(500).json({ success: false, error: err.message });
             });
-    } else {
-        return res.status(400).json({ success: false, error: 'Client WhatsApp não inicializado' });
+    } else if (whatsappClient) { 
+         console.log('Cliente WhatsApp existe mas não está conectado. Tentando reinicializar...');
+         iniciarBot(1, true); 
+         return res.json({ success: true, message: "Tentativa de reinicialização do cliente WhatsApp iniciada." });
+    }
+    else {
+        console.log('Cliente WhatsApp não inicializado. Tentando iniciar...');
+        iniciarBot(1, true); 
+        return res.status(400).json({ success: false, error: 'Client WhatsApp não inicializado, tentativa de início em progresso.' });
     }
 });
 
 // ==============================================
-// ROTAS DE CONFIGURAÇÃO
+// ROTAS DE CONFIGURAÇÃO (API para Dashboard)
 // ==============================================
 
 app.get('/config', requireLogin, (req, res) => {
@@ -256,56 +256,74 @@ app.get('/config', requireLogin, (req, res) => {
 });
 
 app.post('/config', requireLogin, async (req, res) => {
-    const { glpiUrl, appToken, userToken, adminUsername, adminPassword, currentPassword } = req.body;
+    const { glpiUrl, appToken, userToken, adminUsername, adminPassword, currentPassword, requireLogin: authRequireLogin } = req.body;
 
-    // Verifica se está tentando alterar credenciais
-    if ((adminUsername || adminPassword) && !await bcrypt.compare(currentPassword, config.auth.passwordHash)) {
+    if ((adminUsername || adminPassword) && !currentPassword) {
+        return res.status(400).json({ success: false, error: 'Senha atual é obrigatória para alterar credenciais.' });
+    }
+    if ((adminUsername || adminPassword) && currentPassword && !await bcrypt.compare(currentPassword, config.auth.passwordHash)) {
         return res.status(401).json({ success: false, error: 'Senha atual incorreta' });
     }
 
-    // Atualiza credenciais se fornecidas
     if (adminUsername) config.auth.username = adminUsername;
     if (adminPassword) {
         const salt = await bcrypt.genSalt(10);
         config.auth.passwordHash = await bcrypt.hash(adminPassword, salt);
     }
 
-    // Atualiza configurações do GLPI apenas se todos os campos forem fornecidos
-    if (glpiUrl && appToken && userToken) {
+    if (typeof authRequireLogin !== 'undefined') {
+        config.auth.requireLogin = authRequireLogin === 'true' || authRequireLogin === true;
+    }
+
+    if (glpiUrl !== undefined || appToken !== undefined || userToken !== undefined) {
         config.glpi = {
-            url: glpiUrl.endsWith('/') ? glpiUrl.slice(0, -1) : glpiUrl,
-            appToken,
-            userToken
+            url: glpiUrl ? (glpiUrl.endsWith('/') ? glpiUrl.slice(0, -1) : glpiUrl) : (config.glpi?.url || ''),
+            appToken: appToken || (config.glpi?.appToken || ''),
+            userToken: userToken || (config.glpi?.userToken || '')
         };
     }
 
-    // Salva no arquivo
     fs.writeFileSync(configFile, JSON.stringify(config, null, 2));
 
     res.json({
         success: true,
         message: 'Configuração atualizada com sucesso!',
-        glpiConfigured: !!config.glpi?.url
+        glpiConfigured: !!(config.glpi?.url && config.glpi?.appToken && config.glpi?.userToken),
+        authRequireLogin: config.auth.requireLogin
     });
 
-    // Se o GLPI foi configurado agora, tenta iniciar o bot
-    if (glpiUrl && appToken && userToken) {
-        console.log('🔄 GLPI configurado - Tentando iniciar o bot...');
+    if (config.glpi?.url && config.glpi?.appToken && config.glpi?.userToken) {
+        console.log('🔄 Configuração do GLPI salva - Tentando iniciar/reiniciar o bot...');
         setTimeout(() => {
-            iniciarBot(1); // Reinicia com tentativa 1
+            if (whatsappClient) {
+                console.log('Reiniciando o bot existente...');
+                whatsappClient.kill().then(() => { 
+                    whatsappClient = null; 
+                    iniciarBot(1, true); // Force restart
+                }).catch(err => {
+                    console.error('Erro ao matar cliente antigo, prosseguindo com nova instância:', err);
+                    whatsappClient = null;
+                    iniciarBot(1, true); // Force restart
+                });
+            } else {
+                iniciarBot(1, true); // Force restart
+            }
         }, 2000);
+    } else {
+        console.log('Configuração do GLPI incompleta. Bot não será iniciado/reiniciado.')
     }
 });
 
 app.get('/api/config/status', requireLogin, (req, res) => {
     res.json({
-        glpiConfigured: !!config.glpi?.url && !!config.glpi?.appToken && !!config.glpi?.userToken,
+        glpiConfigured: !!(config.glpi?.url && config.glpi?.appToken && config.glpi?.userToken),
         missingFields: {
             url: !config.glpi?.url,
             appToken: !config.glpi?.appToken,
             userToken: !config.glpi?.userToken
         },
-        authConfigured: true
+        authConfigured: true, 
+        requireLogin: config.auth.requireLogin
     });
 });
 
@@ -315,7 +333,7 @@ app.get('/api/config/status', requireLogin, (req, res) => {
 
 async function iniciarSessaoGLPI() {
     if (!config.glpi || !config.glpi.url || !config.glpi.appToken || !config.glpi.userToken) {
-        throw new Error('Configuração do GLPI não encontrada');
+        throw new Error('Configuração do GLPI não encontrada ou incompleta');
     }
     try {
         const response = await axios.get(`${config.glpi.url}/initSession`, {
@@ -324,12 +342,9 @@ async function iniciarSessaoGLPI() {
                 "Authorization": `user_token ${config.glpi.userToken}`
             }
         });
-
-        const session_token = response.data.session_token;
-        console.log("✅ Sessão GLPI iniciada! Token:", session_token);
-        return session_token;
+        return response.data.session_token;
     } catch (error) {
-        console.error("❌ Erro ao iniciar sessão:", error.response ? error.response.data : error.message);
+        console.error("❌ Erro ao iniciar sessão GLPI:", error.response ? error.response.data : error.message);
         return null;
     }
 }
@@ -338,239 +353,232 @@ async function consultarChamadoGLPI(ticket_id) {
     let session_token = null;
     try {
         session_token = await iniciarSessaoGLPI();
+        if (!session_token) throw new Error("Falha ao obter o token de sessão para consulta.");
 
-        if (!session_token) {
-            throw new Error("Falha ao obter o token de sessão.");
-        }
-
-        // Consulta o ticket
         const ticketUrl = `${config.glpi.url}/search/Ticket?` +
             `criteria[0][field]=2&criteria[0][searchtype]=contains&criteria[0][value]=${ticket_id}` +
             `&forcedisplay[0]=2&forcedisplay[1]=1&forcedisplay[2]=15&forcedisplay[3]=12&forcedisplay[4]=5`;
 
         const ticketResponse = await axios.get(ticketUrl, {
-            headers: {
-                "App-Token": config.glpi.appToken,
-                "Session-Token": session_token,
-                "Accept": "application/json"
-            }
+            headers: { "App-Token": config.glpi.appToken, "Session-Token": session_token, "Accept": "application/json" }
         });
 
         if (!ticketResponse.data || ticketResponse.data.totalcount === 0 || !ticketResponse.data.data.length) {
-            console.log("❌ Nenhum chamado encontrado.");
+            console.log(`❌ Nenhum chamado encontrado com ID: ${ticket_id}.`);
             return null;
         }
 
         const chamado = ticketResponse.data.data[0];
         let tecnicoResponsavel = null;
 
-        if (chamado["5"]) {
-            const tecnicoUrl = `${config.glpi.url}/search/User?` +
-                `criteria[0][field]=2&criteria[0][searchtype]=contains&criteria[0][value]=${chamado["5"]}` +
-                `&forcedisplay[0]=9`;
-
+        if (chamado["5"]) { 
+            const tecnicoUrl = `${config.glpi.url}/search/User?criteria[0][field]=2&criteria[0][searchtype]=equals&criteria[0][value]=${chamado["5"]}&forcedisplay[0]=9`;
             const tecnicoResponse = await axios.get(tecnicoUrl, {
-                headers: {
-                    "App-Token": config.glpi.appToken,
-                    "Session-Token": session_token,
-                    "Accept": "application/json"
-                }
+                headers: { "App-Token": config.glpi.appToken, "Session-Token": session_token, "Accept": "application/json" }
             });
-
             if (tecnicoResponse.data && tecnicoResponse.data.data && tecnicoResponse.data.data.length > 0) {
-                tecnicoResponsavel = tecnicoResponse.data.data[0]["9"];
+                tecnicoResponsavel = tecnicoResponse.data.data[0]["9"]; 
             }
         }
-
         return {
-            id: chamado["2"] ?? "ID não encontrado",
-            titulo: chamado["1"] ?? "Sem título",
+            id: chamado["2"] ?? "ID não encontrado", titulo: chamado["1"] ?? "Sem título",
             criado_em: chamado["15"] ? moment(chamado["15"]).format("DD/MM/YYYY HH:mm") : "Data não disponível",
-            status: mapearStatus(chamado["12"]),
-            tecnico: tecnicoResponsavel
+            status: mapearStatus(chamado["12"]), tecnico: tecnicoResponsavel || "Não atribuído"
         };
     } catch (error) {
-        console.error("❌ Erro ao consultar o chamado:", error.response ? error.response.data : error.message);
+        console.error(`❌ Erro ao consultar o chamado ${ticket_id}:`, error.response ? error.response.data : error.message);
         return null;
     } finally {
-        if (session_token) {
-            await encerrarSessaoGLPI(session_token);
-        }
+        if (session_token) await encerrarSessaoGLPI(session_token);
     }
 }
 
-async function criarChamado(nome, descricaoBreve, descricaoDetalhada, anexos = []) {
+async function criarChamado(nomeRequisitante, descricaoBreve, descricaoDetalhada, anexosPaths = [], specificUserId = null) {
     let session_token = null;
+    const arquivosParaAnexarSeparadamente = [];
+    const arquivosProcessadosParaExclusao = []; // Para garantir que todos os arquivos sejam excluídos
+
     try {
         session_token = await iniciarSessaoGLPI();
+        if (!session_token) throw new Error("Falha ao obter o token de sessão para criar chamado.");
 
-        if (!session_token) {
-            throw new Error("Falha ao obter o token de sessão.");
-        }
+        let userIdToAssociate = specificUserId;
 
-        let userId = null;
-        const userUrl = `${config.glpi.url}/search/User?` +
-            `criteria[0][field]=9&criteria[0][searchtype]=contains&criteria[0][value]=${encodeURIComponent(nome)}` +
-            `&forcedisplay[0]=1&forcedisplay[1]=9&forcedisplay[2]=2`;
+        if (!specificUserId && nomeRequisitante) {
+            const userUrl = `${config.glpi.url}/search/User?` +
+                `criteria[0][field]=9&criteria[0][searchtype]=contains&criteria[0][value]=${encodeURIComponent(nomeRequisitante)}` + 
+                `&forcedisplay[0]=1&forcedisplay[1]=9&forcedisplay[2]=2&forcedisplay[3]=34`; 
 
-        const userResponse = await axios.get(userUrl, {
-            headers: {
-                "App-Token": config.glpi.appToken,
-                "Session-Token": session_token,
-                "Accept": "application/json"
+            const userResponse = await axios.get(userUrl, {
+                headers: { "App-Token": config.glpi.appToken, "Session-Token": session_token, "Accept": "application/json" }
+            });
+
+            if (userResponse.data && userResponse.data.totalcount === 1 && userResponse.data.data.length === 1) {
+                userIdToAssociate = userResponse.data.data[0]["2"]; 
+                console.log(`✅ Usuário único encontrado no GLPI: ID ${userIdToAssociate} para "${nomeRequisitante}"`);
+            } else if (userResponse.data && userResponse.data.totalcount > 1) {
+                console.log(`⚠️ Múltiplos usuários (${userResponse.data.totalcount}) encontrados para "${nomeRequisitante}". Retornando lista para seleção.`);
+                return {
+                    multipleUsersFound: true,
+                    users: userResponse.data.data.map(u => ({
+                        id: u["2"], username: u["1"], firstName: u["9"], lastNameOrFullName: u["34"] || '' 
+                    })),
+                    originalNomeRequisitante: nomeRequisitante, descricaoBreve, descricaoDetalhada, anexos: anexosPaths
+                };
+            } else {
+                console.log(`ℹ️ Nenhum usuário encontrado no GLPI para "${nomeRequisitante}". O chamado será criado sem associação de requisitante.`);
+                userIdToAssociate = null; 
             }
-        });
-
-        if (userResponse.data && userResponse.data.totalcount === 1 && userResponse.data.data.length === 1) {
-            userId = userResponse.data.data[0]["2"];
-            console.log(`✅ Usuário encontrado no GLPI: ID ${userId}`);
-        } else if (userResponse.data && userResponse.data.totalcount > 1) {
-            console.log(`⚠️ Múltiplos usuários encontrados para "${nome}". Não associando a nenhum.`);
+        } else if (specificUserId) {
+             console.log(`ℹ️ Usando ID de usuário GLPI fornecido diretamente: ${specificUserId}`);
         }
 
-        let conteudoChamado = `${descricaoDetalhada}<br><br>Enviado por: ${nome}<br>`;
+        let conteudoChamadoHTML = `<p>${descricaoDetalhada.replace(/\n/g, '<br>')}</p>`; // Converte quebras de linha para <br>
 
-        for (const anexo of anexos) {
-            if (mime.lookup(anexo).startsWith('image/')) {
-                const fileContent = fs.readFileSync(anexo, { encoding: 'base64' });
-                const imageTag = `<br><img src="data:${mime.lookup(anexo)};base64,${fileContent}" alt="Anexo" style="max-width: 600px; height: auto;" /><br>`;
-                conteudoChamado += `\n\n${imageTag}`;
+        for (const anexoPath of anexosPaths) {
+            arquivosProcessadosParaExclusao.push(anexoPath); // Adiciona à lista de exclusão
+            const mimeType = mime.lookup(anexoPath);
+            if (mimeType && mimeType.startsWith('image/')) {
+                try {
+                    const fileContentBase64 = fs.readFileSync(anexoPath, { encoding: 'base64' });
+                    const imageTag = `<p><img src="data:${mimeType};base64,${fileContentBase64}" alt="Anexo de Imagem ${path.basename(anexoPath)}" style="max-width: 600px; height: auto; border: 1px solid #ddd; padding: 5px; margin-top:10px;" /></p>`;
+                    conteudoChamadoHTML += imageTag;
+                    console.log(`🖼️ Imagem ${path.basename(anexoPath)} incorporada no chamado.`);
+                } catch (imgError) {
+                    console.error(`❌ Erro ao ler ou incorporar imagem ${anexoPath}:`, imgError);
+                    // Se falhar em incorporar, adiciona para anexo separado como fallback
+                    arquivosParaAnexarSeparadamente.push(anexoPath);
+                }
+            } else {
+                arquivosParaAnexarSeparadamente.push(anexoPath);
             }
         }
-
-        const url = `${config.glpi.url}/Ticket`;
-        const body = {
+        
+        conteudoChamadoHTML += `<p><br>---<br>Enviado por: ${nomeRequisitante} (via WhatsApp)</p>`;
+        
+        const ticketPayload = {
             input: {
-                name: descricaoBreve,
-                content: conteudoChamado
+                name: descricaoBreve, 
+                content: conteudoChamadoHTML, // Usar o HTML formatado
+                "itilcategories_id": 0, // Categoria Raiz por padrão, ajuste se necessário
+                "type": 2, // 1 para Requisição, 2 para Incidente. Ajuste conforme sua necessidade.
+                "urgency": 3, // 1=Muito Baixa, 2=Baixa, 3=Média, 4=Alta, 5=Muito Alta. Ajuste.
             }
         };
 
-        if (userId) {
-            body.input["_users_id_requester"] = userId;
+        if (userIdToAssociate) {
+            ticketPayload.input["_users_id_requester"] = userIdToAssociate;
         }
 
-        const response = await axios.post(url, body, {
-            headers: {
-                "Session-Token": session_token,
-                "App-Token": config.glpi.appToken,
-                "Content-Type": "application/json"
-            }
+        const createTicketUrl = `${config.glpi.url}/Ticket`;
+        const response = await axios.post(createTicketUrl, ticketPayload, {
+            headers: { "Session-Token": session_token, "App-Token": config.glpi.appToken, "Content-Type": "application/json" }
         });
 
-        console.log("✅ Chamado criado com sucesso:", response.data);
+        console.log("✅ Chamado criado com sucesso no GLPI:", response.data);
+        const ticketId = response.data.id;
 
-        if (anexos.length > 0) {
-            for (const anexo of anexos) {
-                await anexarArquivoAoChamado(response.data.id, anexo, session_token);
-            }
-
-            for (const anexo of anexos) {
-                try {
-                    fs.unlinkSync(anexo);
-                    console.log(`🗑️ Arquivo removido: ${anexo}`);
-                } catch (err) {
-                    console.error(`❌ Erro ao remover arquivo ${anexo}:`, err);
+        if (arquivosParaAnexarSeparadamente.length > 0) {
+            console.log(`📎 Iniciando upload de ${arquivosParaAnexarSeparadamente.length} anexo(s) não-imagem para o chamado ID ${ticketId}...`);
+            for (const anexoPath of arquivosParaAnexarSeparadamente) {
+                if (fs.existsSync(anexoPath)) { 
+                    await anexarArquivoAoChamado(ticketId, anexoPath, session_token);
+                } else {
+                    console.warn(`⚠️ Arquivo ${anexoPath} não encontrado para anexo separado. Pulando.`);
                 }
             }
         }
+        return response.data; 
 
-        return response.data;
     } catch (error) {
-        console.error("❌ Erro ao criar chamado:", error.response ? error.response.data : error.message);
+        console.error("❌ Erro detalhado ao criar chamado no GLPI:",
+            error.response ? { data: error.response.data, status: error.response.status } : error.message,
+            error.stack
+        );
         return null;
     } finally {
+        // Limpa TODOS os arquivos processados (incorporados ou anexados)
+        if (arquivosProcessadosParaExclusao.length > 0) {
+            console.log(`🗑️ Limpando ${arquivosProcessadosParaExclusao.length} arquivo(s) temporário(s)...`);
+            for (const anexoPath of arquivosProcessadosParaExclusao) {
+                 if (fs.existsSync(anexoPath)) {
+                    try {
+                        fs.unlinkSync(anexoPath);
+                        // console.log(`🗑️ Arquivo local removido: ${anexoPath}`); // Log pode ser verboso
+                    } catch (errUnlink) {
+                        console.error(`❌ Erro ao remover arquivo local ${anexoPath}:`, errUnlink);
+                    }
+                }
+            }
+        }
         if (session_token) {
             await encerrarSessaoGLPI(session_token);
         }
     }
 }
 
-async function anexarArquivoAoChamado(ticketId, filePath, session_token) {
-    try {
-        const url = `${config.glpi.url}/Document/`;
+async function anexarArquivoAoChamado(ticketId, filePath, session_token_param) {
+    let session_token = session_token_param;
+    let manageSessionInternally = false;
 
+    try {
+        if (!session_token) {
+            session_token = await iniciarSessaoGLPI();
+            if (!session_token) throw new Error("Falha ao obter token de sessão para anexar arquivo.");
+            manageSessionInternally = true;
+        }
+
+        const url = `${config.glpi.url}/Document/`;
         const form = new FormData();
+        const fileName = path.basename(filePath);
+
         form.append('uploadManifest', JSON.stringify({
-            input: {
-                name: path.basename(filePath),
-                _filename: [path.basename(filePath)]
-            }
+            input: { name: fileName, _filename: [fileName] }
         }));
-        form.append('uploadFile', fs.createReadStream(filePath), {
-            filename: path.basename(filePath),
-            contentType: mime.lookup(filePath) || 'application/octet-stream'
+        form.append('filename[0]', fs.createReadStream(filePath), { 
+            filename: fileName, contentType: mime.lookup(filePath) || 'application/octet-stream'
         });
 
-        console.log("📤 Enviando arquivo para o GLPI...");
-
+        console.log(`📤 Enviando arquivo "${fileName}" para o GLPI como anexo separado...`);
         const documentResponse = await axios.post(url, form, {
-            headers: {
-                "Session-Token": session_token,
-                "App-Token": config.glpi.appToken,
-                ...form.getHeaders()
-            }
+            headers: { "Session-Token": session_token, "App-Token": config.glpi.appToken, ...form.getHeaders() }
         });
 
         const documentId = documentResponse.data.id;
-        console.log("✅ Documento enviado com sucesso. ID:", documentId);
+        console.log(`✅ Documento (anexo separado) enviado com sucesso. ID do Documento: ${documentId}`);
 
         const associationUrl = `${config.glpi.url}/Document_Item/`;
         const associationData = {
-            input: {
-                documents_id: documentId,
-                items_id: ticketId,
-                itemtype: "Ticket"
-            }
+            input: { documents_id: documentId, items_id: ticketId, itemtype: "Ticket" }
         };
-
         const associationResponse = await axios.post(associationUrl, associationData, {
-            headers: {
-                "Session-Token": session_token,
-                "App-Token": config.glpi.appToken,
-                "Content-Type": "application/json"
-            }
+            headers: { "Session-Token": session_token, "App-Token": config.glpi.appToken, "Content-Type": "application/json" }
         });
-
-        console.log("✅ Anexo associado ao chamado com sucesso:", associationResponse.data);
+        console.log(`✅ Anexo separado (Documento ID ${documentId}) associado ao chamado ID ${ticketId} com sucesso.`);
     } catch (error) {
-        console.error("❌ Erro ao anexar arquivo ao chamado:", error.response ? error.response.data : error.message);
-        throw error;
+        console.error(`❌ Erro ao anexar arquivo "${path.basename(filePath)}" separadamente ao chamado ${ticketId}:`,
+            error.response ? { data: error.response.data, status: error.response.status } : error.message
+        );
+    } finally {
+        if (manageSessionInternally && session_token) {
+            await encerrarSessaoGLPI(session_token);
+        }
     }
 }
 
 async function encerrarSessaoGLPI(session_token) {
-    if (!session_token) {
-        console.log("⚠️ Nenhum token de sessão fornecido para encerramento");
-        return false;
-    }
-
+    if (!session_token || !config.glpi || !config.glpi.url) return false;
     try {
-        const response = await axios.get(`${config.glpi.url}/killSession`, {
-            headers: {
-                "App-Token": config.glpi.appToken,
-                "Session-Token": session_token
-            }
+        await axios.get(`${config.glpi.url}/killSession`, {
+            headers: { "App-Token": config.glpi.appToken, "Session-Token": session_token }
         });
-
-        console.log("🔍 Resposta da API ao encerrar sessão:", JSON.stringify(response.data, null, 2));
-
-        if (response.data === true) {
-            console.log(`✅ Sessão GLPI encerrada com sucesso (Token: ${session_token})`);
-            return true;
-        } else if (response.data && response.data.session_token === session_token) {
-            console.log(`✅ Sessão GLPI encerrada com sucesso (Token: ${session_token})`);
-            return true;
-        }
-
-        console.log("⚠️ Resposta inesperada ao encerrar sessão:", response.data);
-        return false;
+        return true;
     } catch (error) {
-        console.error("❌ Erro ao encerrar sessão GLPI:", {
-            message: error.message,
-            response: error.response ? error.response.data : null,
-            stack: error.stack
-        });
+        if (error.response && error.response.status !== 401) {
+            console.error(`❌ Erro ao encerrar sessão GLPI:`, error.response ? error.response.data : error.message);
+        } else if (!error.response) {
+             console.error(`❌ Erro de rede ao encerrar sessão GLPI:`, error.message);
+        }
         return false;
     }
 }
@@ -589,349 +597,408 @@ function gerarStringAleatoria(tamanho) {
 }
 
 function gerarNomeUnico(extensao) {
-    const timestamp = moment().format('YYYYMMDDHHmmss');
+    const timestamp = moment().format('YYYYMMDDHHmmssSSS'); 
     const randomString = gerarStringAleatoria(6);
     return `${timestamp}_${randomString}.${extensao}`;
 }
 
 function mapearStatus(statusCode) {
     const statusMap = {
-        1: "Aguardando Atendimento",
-        2: "Em Atendimento",
-        3: "Em Atendimento",
-        4: "Aguardando Atendimento",
-        5: "Resolvido",
-        6: "Resolvido"
+        1: "Novo", 2: "Em Atendimento (Atribuído)", 3: "Em Atendimento (Planejado)", 
+        4: "Pendente", 5: "Solucionado", 6: "Fechado"  
     };
-    return statusMap[statusCode] || "Desconhecido";
+    return statusMap[statusCode] || `Desconhecido (${statusCode})`;
 }
 
 // ==============================================
 // BOT WHATSAPP
 // ==============================================
+let messageProcessing = false; 
 
-async function iniciarBot(tentativa = 1) {
-    // Verificação inicial da configuração do GLPI
+async function processMessageSafe(client, message) {
+    if (messageProcessing) {
+        console.warn(`⚠️ Processamento de mensagem já em curso para ${message.from}.`);
+        return;
+    }
+    messageProcessing = true;
+    try {
+        await handleMessageLogic(client, message); 
+    } catch (error) {
+        console.error("❌ Erro crítico no processamento da mensagem:", error);
+        try {
+            await client.sendText(message.from, "❌ Ocorreu um erro inesperado. Por favor, tente novamente mais tarde ou digite # para recomeçar.");
+        } catch (sendError) {
+            console.error("❌ Falha ao enviar mensagem de erro para o usuário:", sendError);
+        }
+        delete usuariosAtendidos[message.from];
+        delete estadoUsuario[message.from];
+        if (timeoutSessoes[message.from]) {
+            clearTimeout(timeoutSessoes[message.from]);
+            delete timeoutSessoes[message.from];
+        }
+    } finally {
+        messageProcessing = false;
+    }
+}
+
+const timeoutSessoes = {};
+const TEMPO_INATIVIDADE = 15 * 60 * 1000; 
+let usuariosAtendidos = {};
+let estadoUsuario = {}; 
+
+async function encerrarConversaInativa(client, sender) {
+    try {
+        if (usuariosAtendidos[sender] || estadoUsuario[sender]) { 
+            await client.sendText(sender, "⏳ Sua sessão foi encerrada automaticamente devido à inatividade. Se precisar de ajuda, envie qualquer mensagem para iniciar uma nova conversa.");
+            delete usuariosAtendidos[sender];
+            delete estadoUsuario[sender];
+            if (timeoutSessoes[sender]) {
+                 clearTimeout(timeoutSessoes[sender]);
+                 delete timeoutSessoes[sender];
+            }
+            console.log(`♻️ Sessão encerrada por inatividade para: ${sender}`);
+        }
+    } catch (error) {
+        console.error(`❌ Erro ao encerrar conversa inativa para ${sender}:`, error);
+    }
+}
+
+function reiniciarTimerInatividade(client, sender) {
+    if (!client || typeof client.sendText !== 'function') { 
+        console.error('Cliente WhatsApp inválido ou não disponível para reiniciar timer.');
+        return;
+    }
+    if (timeoutSessoes[sender]) {
+        clearTimeout(timeoutSessoes[sender]);
+    }
+    timeoutSessoes[sender] = setTimeout(async () => {
+        await encerrarConversaInativa(client, sender);
+    }, TEMPO_INATIVIDADE);
+}
+
+async function iniciarBot(tentativa = 1, forceRestart = false) {
+    if (whatsappClient && !forceRestart) {
+        if (typeof whatsappClient.isConnected === 'function' && whatsappClient.isConnected()) {
+            console.log("✅ Bot já conectado.");
+            broadcastStatus();
+            return;
+        }
+        console.log("⏳ Bot existente não conectado, aguardando finalização da tentativa atual ou reinício forçado.");
+        return; // Evita múltiplas instâncias se uma já estiver tentando conectar
+    }
+
+    if (whatsappClient && forceRestart) {
+        console.log("🔄 Forçando reinício do bot...");
+        try {
+            await whatsappClient.kill(); 
+            console.log("Cliente antigo fechado.");
+        } catch (e) {
+            console.error("Erro ao fechar cliente antigo, pode já estar fechado:", e.message);
+        }
+        whatsappClient = null; 
+    }
+
     if (!config.glpi || !config.glpi.url || !config.glpi.appToken || !config.glpi.userToken) {
-        console.error('❌ Bot não iniciado - Configuração do GLPI incompleta');
-        console.error('Por favor, configure o GLPI através da interface web');
-
-        // Verifica novamente após um tempo
-        const intervalo = Math.min(10000 * tentativa, 60000);
-        console.log(`🔄 Tentando novamente em ${intervalo / 1000} segundos... (Tentativa ${tentativa})`);
-
+        console.error(`❌ Bot não iniciado (Tentativa ${tentativa}) - Configuração do GLPI incompleta.`);
+        broadcastLog('Configuração do GLPI incompleta. Verifique a interface web.', 'error');
+        const intervalo = Math.min(10000 * Math.pow(1.5, tentativa -1), 600000); 
+        console.log(`🔄 Tentando recarregar configuração e reiniciar bot em ${intervalo / 1000} segundos...`);
         setTimeout(() => {
-            // Recarrega a configuração antes de tentar novamente
             try {
                 const savedConfig = JSON.parse(fs.readFileSync(configFile, 'utf8'));
                 config = { ...config, ...savedConfig };
-                console.log('🔄 Configuração recarregada');
             } catch (e) {
-                console.error('❌ Erro ao recarregar configuração:', e);
+                console.error('❌ Erro ao recarregar configuração antes de nova tentativa do bot:', e);
             }
-
-            iniciarBot(tentativa + 1);
+            iniciarBot(tentativa + 1, false); // Não força restart na retentativa automática
         }, intervalo);
         return;
     }
 
-    console.log('✅ Configuração do GLPI encontrada. Iniciando bot...');
-
-    const timeoutSessoes = {};
-    const TEMPO_INATIVIDADE = 60 * 60 * 1000;
-    let usuariosAtendidos = {};
-    let estadoUsuario = {};
-
-    async function encerrarConversaInativa(client, sender) {
-        try {
-            await client.sendText(sender, "⏳ Sua sessão foi encerrada automaticamente devido à inatividade. Se precisar de ajuda, inicie uma nova conversa.");
-
-            delete usuariosAtendidos[sender];
-            delete estadoUsuario[sender];
-            delete timeoutSessoes[sender];
-
-            console.log(`♻️ Sessão encerrada por inatividade: ${sender}`);
-        } catch (error) {
-            console.error("❌ Erro ao encerrar conversa inativa:", error);
-        }
-    }
-
-    function reiniciarTimerInatividade(client, sender) {
-        if (!client) {
-            console.error('Cliente WhatsApp não está disponível');
-            return;
-        }
-
-        if (timeoutSessoes[sender]) {
-            clearTimeout(timeoutSessoes[sender]);
-        }
-
-        timeoutSessoes[sender] = setTimeout(async () => {
-            await encerrarConversaInativa(client, sender);
-        }, TEMPO_INATIVIDADE);
-    }
+    console.log(`✅ Configuração do GLPI encontrada. Iniciando bot... (Tentativa ${tentativa})`);
+    broadcastLog('Iniciando conexão com o WhatsApp...', 'info');
 
     try {
         whatsappClient = await create({
-            sessionId: 'my-session',
-            headless: true,
-            qrTimeout: 0,
-            authTimeout: 0,
-            useChrome: false,
-            skipUpdateCheck: true,
-            logConsole: false,
-            executablePath: '/usr/bin/chromium-browser',
-            qrLogSkip: false,
-            qrFormat: 'base64',
-            multiDevice: false,
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
-                '--no-first-run',
-                '--no-zygote',
-                '--disable-gpu'
-            ],
-            launchTimeout: 60000,
-            waitForRipeSession: true
+            sessionId: 'my-session', headless: true, qrTimeout: 0, authTimeout: 0, useChrome: false,
+            skipUpdateCheck: true, logConsole: false, 
+            executablePath: process.env.CHROME_BIN || 'C:/Program Files/Google/Chrome/Application/chrome.exe', 
+            qrLogSkip: false, qrFormat: 'base64', multiDevice: false, 
+            args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-accelerated-2d-canvas','--no-first-run','--no-zygote','--disable-gpu'],
+            launchTimeout: 120000, waitForRipeSession: true, killProcessOnBrowserClose: true,
         });
 
-        // Verificação se o cliente foi criado corretamente
-        if (!whatsappClient) {
-            throw new Error('Falha ao criar instância do WhatsApp');
+        if (!whatsappClient || typeof whatsappClient.isConnected !== 'function') {
+            throw new Error('Falha ao criar instância do WhatsApp ou instância inválida.');
         }
-
-        console.log('Tipo do whatsappClient:', typeof whatsappClient);
-        console.log('Cliente pronto?', whatsappClient ? 'Sim' : 'Não');
-
-        // Evento para capturar o QR Code
-        whatsappClient.onStateChanged(async (state) => {
-            console.log('Estado do WhatsApp alterado:', state);
-
-            if (state === 'qr') {
-                const qrCode = await whatsappClient.getQRCode();
-                console.log('QR Code recebido');
-
-                // Envia o QR Code para todos os clientes WebSocket
-                wss.clients.forEach(wsClient => {
-                    if (wsClient.readyState === WebSocket.OPEN) {
-                        wsClient.send(JSON.stringify({
-                            type: 'qr',
-                            data: qrCode
-                        }));
-                    }
-                });
-            }
-
-            // Atualiza o status de conexão
-            broadcastStatus();
-        });
-
-        console.log('🤖 Bot iniciado com sucesso!');
-
-        whatsappClient.onMessage(async message => {
-            const sender = message.from;
-
-            reiniciarTimerInatividade(whatsappClient, sender);
-
-            console.log("📩 Mensagem recebida de:", sender, "Conteúdo:", message.body);
-            console.log("📌 Estado atual:", estadoUsuario[sender]);
-
-            if (message.body === "#") {
-                if (timeoutSessoes[sender]) {
-                    clearTimeout(timeoutSessoes[sender]);
-                    delete timeoutSessoes[sender];
-                }
-
-                await whatsappClient.simulateTyping(sender, true)
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                await whatsappClient.simulateTyping(sender, false)
-
-                await whatsappClient.sendText(sender, "🔚 Atendimento encerrado.");
-                delete usuariosAtendidos[sender];
-                delete estadoUsuario[sender];
-                return;
-            }
-
-            if (!usuariosAtendidos[sender]) {
-                usuariosAtendidos[sender] = true;
-                estadoUsuario[sender] = {};
-
-                await whatsappClient.simulateTyping(sender, true)
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                await whatsappClient.simulateTyping(sender, false)
-
-                await whatsappClient.sendText(sender,
-                    "Olá, como posso te ajudar?\n\n" +
-                    "1️⃣ - Abrir chamado\n" +
-                    "2️⃣ - Acompanhar chamado\n" +
-                    "0️⃣ - Sair"
-                );
-                await whatsappClient.sendText(sender, "Para sair, a qualquer momento digite *#*.");
-                return;
-            }
-
-            if (!estadoUsuario[sender] || estadoUsuario[sender].estado === "aguardando_comando") {
-                estadoUsuario[sender] = {};
-
-                await whatsappClient.simulateTyping(sender, true)
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                await whatsappClient.simulateTyping(sender, false)
-
-                await whatsappClient.sendText(sender, "Olá, como posso te ajudar?\n\n" +
-                    "1️⃣ - Abrir chamado\n" +
-                    "2️⃣ - Acompanhar chamado\n" +
-                    "0️⃣ - Sair"
-                );
-                return;
-            }
-
-            if (!estadoUsuario[sender]) {
-                estadoUsuario[sender] = {};
-            }
-
-            if (message.body === "1") {
-                estadoUsuario[sender].estado = "abrir_chamado";
-
-                await whatsappClient.simulateTyping(sender, true)
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                await whatsappClient.simulateTyping(sender, false)
-
-                await whatsappClient.sendText(sender, "Ótimo, descreva em poucas palavras qual o seu problema.");
-            } else if (estadoUsuario[sender].estado === "abrir_chamado") {
-                let descricaoBreve = message.body.trim();
-                estadoUsuario[sender].descricaoBreve = descricaoBreve;
-                await whatsappClient.sendText(sender, "Agora, descreva de forma detalhada o seu problema.");
-                estadoUsuario[sender].estado = "aguardar_descricao_detalhada";
-            } else if (estadoUsuario[sender].estado === "aguardar_descricao_detalhada") {
-                estadoUsuario[sender].descricaoDetalhada = message.body.trim();
-
-                if (estadoUsuario[sender].descricaoDetalhada) {
-                    await whatsappClient.sendText(sender, "Agora, você pode enviar anexos (fotos, documentos, etc.). Quando terminar, digite 0 para continuar.");
-                    estadoUsuario[sender].estado = "aguardar_anexos";
-                } else {
-                    await whatsappClient.sendText(sender, "⚠️ Por favor, insira uma descrição detalhada.");
-                }
-            } else if (estadoUsuario[sender].estado === "aguardar_anexos") {
-                if (message.body === "0") {
-                    await whatsappClient.sendText(sender, "Agora, com quem estou falando?");
-                    await hatsappClient.sendText(sender, "Diga apenas seu primeiro nome, sem cargo ou setor");
-                    estadoUsuario[sender].estado = "aguardar_nome";
-                } else if (message.mimetype) {
-                    try {
-                        const mediaData = await decryptMedia(message);
-                        const fileExtension = mime.extension(message.mimetype) || 'bin';
-                        const fileName = gerarNomeUnico(fileExtension);
-                        const filePath = path.join(pastaDestino, fileName);
-
-                        fs.writeFileSync(filePath, mediaData);
-                        console.log(`Anexo salvo em: ${filePath}`);
-
-                        if (!estadoUsuario[sender].anexos) {
-                            estadoUsuario[sender].anexos = [];
-                        }
-                        estadoUsuario[sender].anexos.push(filePath);
-
-                        await whatsappClient.sendText(sender, `✅ ${estadoUsuario[sender].anexos.length} anexo(s) recebido(s) e salvos. Envie outro anexo ou digite 0 para continuar.`);
-                    } catch (error) {
-                        console.error("❌ Erro ao processar anexo:", error);
-                        await whatsappClient.sendText(sender, "❌ Erro ao processar anexo. Tente novamente.");
-                    }
-                } else {
-                    await whatsappClient.sendText(sender, "❌ Mensagem inválida. Envie um anexo ou digite 0 para continuar.");
-                }
-            } else if (estadoUsuario[sender].estado === "aguardar_nome") {
-                estadoUsuario[sender].nomeUsuario = message.body.trim();
-
-                let respostaChamado = await criarChamado(
-                    estadoUsuario[sender].nomeUsuario,
-                    estadoUsuario[sender].descricaoBreve,
-                    estadoUsuario[sender].descricaoDetalhada,
-                    estadoUsuario[sender].anexos || []
-                );
-
-                if (estadoUsuario[sender].anexos) {
-                    delete estadoUsuario[sender].anexos;
-                }
-
-                if (respostaChamado) {
-                    await whatsappClient.simulateTyping(sender, true)
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                    await whatsappClient.simulateTyping(sender, false)
-
-                    await whatsappClient.sendText(sender, `✅ Seu chamado foi criado com sucesso! Número do chamado: ${respostaChamado.id}\n\n` +
-                        "Para sair, digite #.");
-                } else {
-                    await whatsappClient.simulateTyping(sender, true)
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                    await whatsappClient.simulateTyping(sender, false)
-
-                    await whatsappClient.sendText(sender, "❌ Não foi possível criar o chamado. Tente novamente mais tarde." + `\n\n Para sair, digite #.`);
-                }
-
-                estadoUsuario[sender].estado = "aguardando_comando";
-            } else if (message.body === "2") {
-                estadoUsuario[sender].estado = "acompanhar_chamado";
-
-                await whatsappClient.simulateTyping(sender, true)
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                await whatsappClient.simulateTyping(sender, false)
-
-                await whatsappClient.sendText(sender, "🔍 Informe o número do seu chamado.");
-            } else if (estadoUsuario[sender].estado === "acompanhar_chamado") {
-                let ticketId = message.body.trim();
-                let ticketData = await consultarChamadoGLPI(ticketId);
-
-                if (ticketData) {
-                    let mensagem = `📄 *Detalhes do Chamado #${ticketData.id}:*\n\n` +
-                        `🔹 *Título:* ${ticketData.titulo}\n` +
-                        `📅 *Criado em:* ${ticketData.criado_em}\n` +
-                        `📌 *Status:* ${ticketData.status}`;
-
-                    if (ticketData.tecnico) {
-                        mensagem += `\n👤 *Técnico Responsável:* ${ticketData.tecnico}`;
-                    }
-
-                    mensagem += `\n\nPara sair, digite #.`;
-
-                    await whatsappClient.simulateTyping(sender, true)
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                    await whatsappClient.simulateTyping(sender, false)
-
-                    await whatsappClient.sendText(sender, mensagem);
-                } else {
-                    await whatsappClient.sendText(sender, "❌ Não foi possível encontrar o chamado. Verifique o número e tente novamente.");
-                }
-
-                estadoUsuario[sender].estado = "aguardando_comando";
-            } else if (message.body === "0") {
-                await whatsappClient.sendText(sender, "👋 Obrigado pelo contato!");
-                delete usuariosAtendidos[sender];
-                delete estadoUsuario[sender];
-            } else {
-                await whatsappClient.simulateTyping(sender, true)
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                await whatsappClient.simulateTyping(sender, false)
-
-                await whatsappClient.sendText(sender, "❌ Opção inválida! Escolha uma opção válida:\n\n" +
-                    "1️⃣ - Abrir chamado\n" +
-                    "2️⃣ - Acompanhar chamado\n" +
-                    "0️⃣ - Sair"
-                );
-            }
-        });
-
-        // Notifica que a conexão foi estabelecida
-        broadcastStatus();
-
+        console.log('✅ Cliente WhatsApp criado. Configurando ouvintes...');
+        setupWhatsappListeners(); 
     } catch (error) {
-        console.error("❌ Erro no bot:", error);
-        console.log("🔄 Reiniciando o bot...");
+        console.error(`❌ Erro crítico ao iniciar bot (Tentativa ${tentativa}):`, error.message);
+        whatsappClient = null; 
+        broadcastLog(`Erro ao iniciar WhatsApp: ${error.message}. Tentando novamente...`, 'error');
+        broadcastStatus(); 
+        const intervaloErro = Math.min(15000 * Math.pow(1.5, tentativa -1), 600000); 
+        console.log(`🔄 Reiniciando o bot devido a erro em ${intervaloErro / 1000} segundos...`);
         setTimeout(() => {
-            iniciarBot(tentativa + 1);
-        }, 5000);
+            iniciarBot(tentativa + 1, false); // Não força restart na retentativa automática
+        }, intervaloErro);
     }
+}
+
+function setupWhatsappListeners() {
+    if (!whatsappClient) {
+        console.error("❌ Tentativa de configurar ouvintes sem cliente WhatsApp inicializado.");
+        return;
+    }
+    console.log("🎧 Configurando ouvintes de eventos do WhatsApp...");
+
+    whatsappClient.onStateChanged(async (state) => {
+        console.log('🔄 Estado do WhatsApp alterado:', state);
+        broadcastLog(`Estado do WhatsApp: ${state}`, 'info');
+        if (state === 'qr') {
+            try {
+                const qrCode = await whatsappClient.getQrCode(); 
+                if (qrCode) {
+                    console.log('📲 QR Code recebido. Enviando para WebSocket...');
+                    wss.clients.forEach(wsClient => {
+                        if (wsClient.readyState === WebSocket.OPEN) {
+                            wsClient.send(JSON.stringify({ type: 'qr', data: qrCode }));
+                        }
+                    });
+                } else { console.warn("⚠️ QR Code recebido como nulo/vazio."); }
+            } catch (qrError) { console.error("❌ Erro ao obter QR Code:", qrError); }
+        } else if (state === 'CONNECTED') {
+            console.log('✅ WhatsApp Conectado!');
+            broadcastLog('WhatsApp conectado com sucesso!', 'success');
+        } else if (['TIMEOUT', 'UNLAUNCHED', 'CONFLICT', 'UNPAIRED', 'DISCONNECTED'].includes(state)) {
+            console.warn(`⚠️ WhatsApp desconectado ou em estado problemático: ${state}.`);
+            broadcastLog(`WhatsApp desconectado: ${state}. Será feita uma tentativa de reconexão.`, 'warn');
+            if (whatsappClient && typeof whatsappClient.kill === 'function') {
+                whatsappClient.kill().then(() => {
+                    whatsappClient = null; // Garante que será recriado
+                    console.log("Cliente anterior finalizado. Agendando reinício do bot...");
+                    setTimeout(() => iniciarBot(1, true), 5000); 
+                }).catch(err => {
+                    console.error("Erro ao tentar matar cliente para reconexão:", err);
+                    whatsappClient = null;
+                    setTimeout(() => iniciarBot(1, true), 5000);
+                });
+            } else {
+                 whatsappClient = null;
+                 setTimeout(() => iniciarBot(1, true), 5000);
+            }
+        }
+        broadcastStatus();
+    });
+
+    whatsappClient.onMessage(async message => {
+        await processMessageSafe(whatsappClient, message);
+    });
+    
+    whatsappClient.onIncomingCall(async (call) => {
+        console.log("📞 Chamada recebida, rejeitando:", call);
+        try {
+            await whatsappClient.rejectCall(call.id);
+            await whatsappClient.sendText(call.peerJid, "Desculpe, não posso atender chamadas. Por favor, envie uma mensagem de texto.");
+        } catch (rejectError) { console.error("❌ Erro ao rejeitar chamada:", rejectError); }
+    });
+    console.log('🤖 Ouvintes configurados. Bot pronto para receber mensagens assim que conectado.');
+}
+
+async function handleMessageLogic(client, message) {
+    const sender = message.from;
+    const body = message.body ? message.body.trim() : ""; 
+    const senderName = message.sender && message.sender.pushname ? message.sender.pushname : sender; 
+
+    if (message.isGroupMsg || message.from === 'status@broadcast') return; 
+    reiniciarTimerInatividade(client, sender);
+
+    if (body.toLowerCase() === "#" || body.toLowerCase() === "cancelar") {
+        if (timeoutSessoes[sender]) clearTimeout(timeoutSessoes[sender]);
+        delete timeoutSessoes[sender];
+        delete usuariosAtendidos[sender]; 
+        delete estadoUsuario[sender];     
+        await client.sendText(sender, "🔚 Atendimento encerrado. Se precisar de algo mais, basta enviar uma mensagem. 👋");
+        console.log(`🛑 Atendimento encerrado manualmente para ${sender}`);
+        return;
+    }
+    
+    if (!usuariosAtendidos[sender] || !estadoUsuario[sender] || !estadoUsuario[sender].estado) {
+        usuariosAtendidos[sender] = true; 
+        estadoUsuario[sender] = { estado: "aguardando_opcao_inicial", dadosTemporarios: {} };
+        await client.simulateTyping(sender, true);
+        await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 1000));
+        await client.simulateTyping(sender, false);
+        await client.sendText(sender,
+            `Olá ${senderName}, sou seu assistente virtual para suporte GLPI. Como posso te ajudar hoje?\n\n` +
+            "1️⃣ - Abrir novo chamado\n" +
+            "2️⃣ - Acompanhar chamado existente\n" +
+            "0️⃣ - Encerrar conversa"
+        );
+        await client.sendText(sender, "A qualquer momento, digite *#* ou *cancelar* para encerrar e voltar ao início.");
+        reiniciarTimerInatividade(client, sender); 
+        return;
+    }
+
+    const currentState = estadoUsuario[sender].estado;
+    const dados = estadoUsuario[sender].dadosTemporarios;
+
+    if (currentState === "aguardando_opcao_inicial") {
+        if (body === "1") {
+            estadoUsuario[sender].estado = "abrir_chamado_descricao_breve";
+            dados.anexos = []; 
+            await client.sendText(sender, "📝 Entendido! Para abrir um novo chamado, por favor, descreva o problema em poucas palavras (será o título do chamado).");
+        } else if (body === "2") {
+            estadoUsuario[sender].estado = "acompanhar_chamado_id";
+            await client.sendText(sender, "🔍 Para acompanhar um chamado, por favor, informe o número (ID) do seu chamado.");
+        } else if (body === "0") {
+            await client.sendText(sender, "👋 Obrigado pelo contato! Até a próxima.");
+            delete usuariosAtendidos[sender]; delete estadoUsuario[sender];
+            if (timeoutSessoes[sender]) clearTimeout(timeoutSessoes[sender]); delete timeoutSessoes[sender];
+        } else {
+            await client.sendText(sender, "❌ Opção inválida. Por favor, escolha uma das opções do menu (1, 2 ou 0).");
+        }
+        return;
+    }
+
+    if (currentState === "abrir_chamado_descricao_breve") {
+        if (!body) { 
+            await client.sendText(sender, "⚠️ O título do chamado não pode ser vazio. Por favor, descreva o problema em poucas palavras.");
+            return; 
+        }
+        dados.descricaoBreve = body;
+        estadoUsuario[sender].estado = "abrir_chamado_descricao_detalhada";
+        await client.sendText(sender, "📄 Ótimo. Agora, por favor, descreva detalhadamente o problema.");
+    }
+    else if (currentState === "abrir_chamado_descricao_detalhada") {
+        if (!body) { 
+            await client.sendText(sender, "⚠️ A descrição detalhada do chamado não pode ser vazia. Por favor, forneça os detalhes do problema.");
+            return; 
+        }
+        dados.descricaoDetalhada = body;
+        estadoUsuario[sender].estado = "abrir_chamado_anexos";
+        await client.sendText(sender, "🖼️ Se desejar, envie agora arquivos ou imagens como anexo. Quando terminar de enviar os anexos (ou se não houver), digite *0* para prosseguir.");
+    }
+    else if (currentState === "abrir_chamado_anexos") {
+        if (message.mimetype) { 
+            try {
+                const mediaData = await decryptMedia(message);
+                const fileExtension = mime.extension(message.mimetype) || 'bin';
+                const fileName = gerarNomeUnico(fileExtension);
+                const filePath = path.join(pastaDestino, fileName);
+                fs.writeFileSync(filePath, mediaData);
+                console.log(`📎 Anexo salvo localmente: ${filePath} para ${sender}`);
+                if (!dados.anexos) dados.anexos = [];
+                dados.anexos.push(filePath); // Salva o caminho do arquivo
+                await client.sendText(sender, `✅ ${dados.anexos.length} anexo(s) recebido(s). Envie outro ou digite *0* para continuar.`);
+            } catch (error) {
+                console.error(`❌ Erro ao processar anexo de ${sender}:`, error);
+                await client.sendText(sender, "❌ Ops! Ocorreu um erro ao processar seu anexo. Tente enviar novamente ou digite *0* para continuar sem este anexo.");
+            }
+        } else if (body === "0") {
+            estadoUsuario[sender].estado = "abrir_chamado_nome_requisitante";
+            await client.sendText(sender, `👤 Para finalizar, por favor, informe seu nome completo para identificação no GLPI.`);
+        } else {
+            await client.sendText(sender, "❓ Entrada inválida. Por favor, envie um anexo ou digite *0* para prosseguir.");
+        }
+    }
+    else if (currentState === "abrir_chamado_nome_requisitante") {
+        if (!body) { 
+            await client.sendText(sender, "⚠️ O nome do requisitante não pode ser vazio. Por favor, informe seu nome completo.");
+            return; 
+        }
+        dados.nomeRequisitante = body; 
+        await client.sendText(sender, "⏳ Processando sua solicitação e buscando seu usuário no GLPI...");
+        await client.simulateTyping(sender, true);
+        const resultadoChamado = await criarChamado(
+            dados.nomeRequisitante, dados.descricaoBreve, dados.descricaoDetalhada, dados.anexos || []
+        );
+        await client.simulateTyping(sender, false);
+
+        if (resultadoChamado && resultadoChamado.multipleUsersFound) {
+            dados.potentialGlpiUsers = resultadoChamado.users; 
+            dados.descricaoBreve = resultadoChamado.descricaoBreve; // Preserva os dados para a próxima etapa
+            dados.descricaoDetalhada = resultadoChamado.descricaoDetalhada;
+            dados.anexos = resultadoChamado.anexos;
+            dados.nomeRequisitante = resultadoChamado.originalNomeRequisitante;
+            estadoUsuario[sender].estado = "abrir_chamado_selecionar_usuario_glpi";
+            let userListMessage = "👥 Encontrei mais de um registro com um nome parecido. Por favor, selecione qual deles é você:\n\n";
+            resultadoChamado.users.forEach((user, index) => {
+                let displayName = user.firstName;
+                if (user.lastNameOrFullName && user.lastNameOrFullName !== user.firstName) displayName += ` ${user.lastNameOrFullName}`;
+                if (user.username) displayName += ` (${user.username})`;
+                userListMessage += `${index + 1} - ${displayName}\n`;
+            });
+            userListMessage += "\nDigite o número correspondente ou *#* para cancelar.";
+            await client.sendText(sender, userListMessage);
+        } else if (resultadoChamado && resultadoChamado.id) { 
+            await client.sendText(sender, `✅ Chamado criado com sucesso! O número do seu chamado é: *${resultadoChamado.id}*.\n\nObrigado! Se precisar de mais alguma coisa, é só chamar.`);
+            delete estadoUsuario[sender].dadosTemporarios;
+            estadoUsuario[sender].estado = "aguardando_opcao_inicial"; 
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            await client.sendText(sender, "Como posso te ajudar agora?\n\n1️⃣ - Abrir novo chamado\n2️⃣ - Acompanhar chamado existente\n0️⃣ - Encerrar conversa");
+        } else { 
+            await client.sendText(sender, "❌ Desculpe, ocorreu um erro e não foi possível criar seu chamado. Por favor, tente novamente mais tarde.");
+            delete estadoUsuario[sender].dadosTemporarios;
+            estadoUsuario[sender].estado = "aguardando_opcao_inicial";
+        }
+    }
+    else if (currentState === "abrir_chamado_selecionar_usuario_glpi") {
+        const selection = parseInt(body, 10);
+        if (isNaN(selection) || selection < 1 || selection > dados.potentialGlpiUsers.length) {
+            await client.sendText(sender, `❌ Opção inválida. Por favor, digite um número entre 1 e ${dados.potentialGlpiUsers.length}.`);
+            // Reenviar lista pode ser útil
+            return;
+        }
+        const selectedUser = dados.potentialGlpiUsers[selection - 1];
+        await client.sendText(sender, `⏳ Você selecionou "${selectedUser.firstName}${selectedUser.lastNameOrFullName ? ' '+selectedUser.lastNameOrFullName : ''}". Criando o chamado...`);
+        await client.simulateTyping(sender, true);
+        const resultadoFinalChamado = await criarChamado(
+            dados.nomeRequisitante, dados.descricaoBreve, dados.descricaoDetalhada, dados.anexos || [], selectedUser.id 
+        );
+        await client.simulateTyping(sender, false);
+        if (resultadoFinalChamado && resultadoFinalChamado.id) {
+            await client.sendText(sender, `✅ Chamado criado com sucesso e associado a você! O número do seu chamado é: *${resultadoFinalChamado.id}*.\n\nObrigado!`);
+        } else {
+            await client.sendText(sender, "❌ Desculpe, ocorreu um erro ao tentar criar o chamado após a seleção.");
+        }
+        delete estadoUsuario[sender].dadosTemporarios; 
+        estadoUsuario[sender].estado = "aguardando_opcao_inicial";
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        await client.sendText(sender, "Como posso te ajudar agora?\n\n1️⃣ - Abrir novo chamado\n2️⃣ - Acompanhar chamado existente\n0️⃣ - Encerrar conversa");
+    }
+    else if (currentState === "acompanhar_chamado_id") {
+        if (!body || !/^\d+$/.test(body)) { 
+            await client.sendText(sender, "⚠️ Por favor, informe um número de chamado válido.");
+            return;
+        }
+        const ticketId = body;
+        await client.sendText(sender, `⏳ Consultando informações do chamado *#${ticketId}*...`);
+        await client.simulateTyping(sender, true);
+        const ticketData = await consultarChamadoGLPI(ticketId);
+        await client.simulateTyping(sender, false);
+        if (ticketData) {
+            let mensagem = `📄 *Detalhes do Chamado #${ticketData.id}:*\n\n` +
+                `🔹 *Título:* ${ticketData.titulo}\n` + `📅 *Criado em:* ${ticketData.criado_em}\n` +
+                `📌 *Status:* ${ticketData.status}`;
+            if (ticketData.tecnico && ticketData.tecnico !== "Não atribuído") mensagem += `\n👤 *Técnico Responsável:* ${ticketData.tecnico}`;
+            mensagem += `\n\nComo posso te ajudar agora?\n1️⃣ Abrir novo chamado\n2️⃣ Acompanhar outro chamado\n0️⃣ Encerrar`;
+            await client.sendText(sender, mensagem);
+        } else {
+            await client.sendText(sender, `❌ Não foi possível encontrar informações para o chamado *#${ticketId}*.`);
+            await client.sendText(sender, "Como posso te ajudar agora?\n1️⃣ Abrir novo chamado\n2️⃣ Acompanhar outro chamado\n0️⃣ Encerrar");
+        }
+        estadoUsuario[sender].estado = "aguardando_opcao_inicial";
+    }
+     else {
+        console.warn(`⚠️ Estado não reconhecido ou fluxo quebrado para ${sender}: ${currentState}. Redefinindo.`);
+        await client.sendText(sender, "❌ Ops! Algo não saiu como esperado. Vamos recomeçar.");
+        delete usuariosAtendidos[sender]; delete estadoUsuario[sender];
+        if (timeoutSessoes[sender]) clearTimeout(timeoutSessoes[sender]); delete timeoutSessoes[sender];
+        return; 
+    }
+    reiniciarTimerInatividade(client, sender);
 }
 
 // ==============================================
@@ -940,33 +1007,48 @@ async function iniciarBot(tentativa = 1) {
 
 const PORT = process.env.PORT || 3000;
 
-function startServer(port) {
-    const server = app.listen(port, () => {
-        console.log(`🌐 Servidor web rodando na porta ${port}`);
-        console.log(`Acesse a interface em: http://localhost:${port}/login`);
-
-        // Integra o WebSocket com o servidor HTTP
+function startServer(portToTry) {
+    const server = app.listen(portToTry, () => {
+        console.log(`🌐 Servidor web rodando na porta ${portToTry}`);
+        console.log(`Acesse a interface em: http://localhost:${portToTry}/`); 
         server.on('upgrade', (request, socket, head) => {
-            wss.handleUpgrade(request, socket, head, ws => {
-                wss.emit('connection', ws, request);
-            });
+            wss.handleUpgrade(request, socket, head, ws => wss.emit('connection', ws, request));
+        });
+        wss.on('connection', (ws) => {
+            console.log('🔌 Cliente WebSocket conectado à interface web.');
+            broadcastStatus(); 
+             ws.send(JSON.stringify({ 
+                type: 'glpiConfigStatus',
+                data: {
+                    configured: !!(config.glpi?.url && config.glpi?.appToken && config.glpi?.userToken),
+                    requireLogin: config.auth.requireLogin
+                }
+            }));
+            ws.on('message', message => console.log('📦 Mensagem do WebSocket:', message.toString()));
+            ws.on('close', () => console.log('🔌 Cliente WebSocket desconectado.'));
+            ws.on('error', (error) => console.error('❌ Erro no WebSocket:', error));
         });
 
-        // Inicia o bot após um pequeno delay
+        console.log("⏳ Verificando configuração do GLPI antes de iniciar o bot...");
         setTimeout(() => {
-            iniciarBot(1);
-        }, 50000);
-    });
-
-    server.on('error', (err) => {
+            if (config.glpi && config.glpi.url && config.glpi.appToken && config.glpi.userToken) {
+                console.log("🚀 Configuração do GLPI encontrada. Iniciando o bot WhatsApp...");
+                iniciarBot(1); 
+            } else {
+                console.warn("⚠️ Bot WhatsApp não iniciado: Configuração do GLPI incompleta.");
+                broadcastLog("Bot não iniciado: Configuração do GLPI incompleta.", "warn");
+                iniciarBot(1); // Tenta iniciar mesmo assim, pois iniciarBot tem seu próprio loop de verificação de config
+            }
+        }, 5000); 
+    }).on('error', (err) => {
         if (err.code === 'EADDRINUSE') {
-            console.log(`⚠️ Porta ${port} em uso, tentando porta ${port + 1}...`);
-            startServer(port + 1);
+            console.warn(`⚠️ Porta ${portToTry} em uso, tentando porta ${portToTry + 1}...`);
+            startServer(portToTry + 1); 
         } else {
-            console.error('❌ Erro no servidor:', err);
+            console.error('❌ Erro fatal ao iniciar servidor web:', err);
+            process.exit(1); 
         }
     });
 }
 
-// Inicia o servidor
-startServer(PORT);
+startServer(parseInt(PORT, 10));
