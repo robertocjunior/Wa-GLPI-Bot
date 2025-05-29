@@ -10,4 +10,9 @@ services:
       - "3000"
     ports:
       - "3000:3000"
+    volumes:
+      - whatsapp_session:/home/node/app/whatsapp_session_data
     restart: unless-stopped
+
+volumes:
+  whatsapp_session:
