@@ -398,16 +398,18 @@ async function consultarChamadoGLPI(ticket_id) {
     }
 }
 
-async function criarChamado(nomeRequisitante, descricaoBreve, descricaoDetalhada, anexosPaths = [], specificUserId = null) {
+async function criarChamado(nomeRequisitante, descricaoBreve, descricaoDetalhada, numeroTelefone, anexosPaths = [], specificUserId = null, selectedGlpiUserName = null) {
     let session_token = null;
     const arquivosParaAnexarSeparadamente = [];
     const arquivosProcessadosParaExclusao = []; 
+    let glpiUserNameForLink = null; // Para armazenar o nome do usuário GLPI se encontrado nesta chamada
 
     try {
         session_token = await iniciarSessaoGLPI();
         if (!session_token) throw new Error("Falha ao obter o token de sessão para criar chamado.");
 
         let userIdToAssociate = specificUserId;
+
 
         if (!specificUserId && nomeRequisitante) {
             const userUrl = `${config.glpi.url}/search/User?` +
@@ -420,7 +422,12 @@ async function criarChamado(nomeRequisitante, descricaoBreve, descricaoDetalhada
 
             if (userResponse.data && userResponse.data.totalcount === 1 && userResponse.data.data.length === 1) {
                 userIdToAssociate = userResponse.data.data[0]["2"]; 
-                console.log(`✅ Usuário único encontrado no GLPI: ID ${userIdToAssociate} para "${nomeRequisitante}"`);
+                const glpiUser = userResponse.data.data[0];
+                glpiUserNameForLink = glpiUser["9"]; // firstName
+                if (glpiUser["34"] && glpiUser["34"] !== glpiUser["9"]) { // lastNameOrFullName
+                    glpiUserNameForLink += ` ${glpiUser["34"]}`;
+                }
+                console.log(`✅ Usuário único encontrado no GLPI: ID ${userIdToAssociate} para "${nomeRequisitante}", nome GLPI: "${glpiUserNameForLink}"`);
             } else if (userResponse.data && userResponse.data.totalcount > 1) {
                 console.log(`⚠️ Múltiplos usuários (${userResponse.data.totalcount}) encontrados para "${nomeRequisitante}". Retornando lista para seleção.`);
                 return {
@@ -428,7 +435,8 @@ async function criarChamado(nomeRequisitante, descricaoBreve, descricaoDetalhada
                     users: userResponse.data.data.map(u => ({
                         id: u["2"], username: u["1"], firstName: u["9"], lastNameOrFullName: u["34"] || '' 
                     })),
-                    originalNomeRequisitante: nomeRequisitante, descricaoBreve, descricaoDetalhada, anexos: anexosPaths
+                    originalNomeRequisitante: nomeRequisitante, descricaoBreve, descricaoDetalhada, anexos: anexosPaths,
+                    // selectedGlpiUserName não é relevante aqui, pois a seleção ainda não ocorreu
                 };
             } else {
                 console.log(`ℹ️ Nenhum usuário encontrado no GLPI para "${nomeRequisitante}". O chamado será criado sem associação de requisitante.`);
@@ -439,6 +447,31 @@ async function criarChamado(nomeRequisitante, descricaoBreve, descricaoDetalhada
         }
 
         let conteudoChamadoHTML = `<p>${descricaoDetalhada.replace(/\n/g, '<br>')}</p>`; 
+
+        // Construir a informação do solicitante ANTES de adicionar as imagens
+        let infoSolicitanteHTML = '';
+        if (numeroTelefone) {
+            const telefoneLimpo = numeroTelefone.replace(/@c\.us$/, ''); // Remove @c.us do final
+            
+            // Determina o nome a ser usado no TEXTO do link do WhatsApp
+            let nomeParaUsarNoLinkInternoWhatsapp;
+            if (selectedGlpiUserName) { // Prioridade 1: Nome do GLPI passado após seleção do usuário
+                nomeParaUsarNoLinkInternoWhatsapp = selectedGlpiUserName;
+            } else if (glpiUserNameForLink) { // Prioridade 2: Nome do GLPI encontrado na busca desta função
+                nomeParaUsarNoLinkInternoWhatsapp = glpiUserNameForLink;
+            } else { // Fallback: Nome fornecido pelo requisitante no chat
+                nomeParaUsarNoLinkInternoWhatsapp = nomeRequisitante;
+            }
+
+            const tituloChamadoParaLink = descricaoBreve;
+            const textoWhatsapp = `Olá *${encodeURIComponent(nomeParaUsarNoLinkInternoWhatsapp)}*, vi que você abriu um chamado na nossa central com o assunto *${encodeURIComponent(tituloChamadoParaLink)}*, poderia me dar mais algumas informações sobre`;
+            const linkWhatsapp = `https://api.whatsapp.com/send/?phone=${telefoneLimpo}&text=${textoWhatsapp}&type=phone_number&app_absent=0`;
+            
+            infoSolicitanteHTML = `<p><br>Chamado aberto por ${nomeRequisitante} pelo WhatsApp através do número <a href="${linkWhatsapp}" target="_blank" rel="noopener noreferrer">${telefoneLimpo}</a>.</p>`;
+        } else {
+            infoSolicitanteHTML = `<p><br>Chamado aberto por ${nomeRequisitante} (via WhatsApp).</p>`; // Fallback caso não haja número
+        }
+        conteudoChamadoHTML += infoSolicitanteHTML;
 
         for (const anexoPath of anexosPaths) {
             arquivosProcessadosParaExclusao.push(anexoPath); 
@@ -460,9 +493,8 @@ async function criarChamado(nomeRequisitante, descricaoBreve, descricaoDetalhada
             }
             // Não há 'else' aqui, pois todos os arquivos (imagens ou não) já foram adicionados a arquivosParaAnexarSeparadamente
         }
-        
-        conteudoChamadoHTML += `<p><br>---<br>Enviado por: ${nomeRequisitante} (via WhatsApp)</p>`;
-        
+        // A antiga seção 'infoRemetente' foi substituída e integrada acima.
+
         const ticketPayload = {
             input: {
                 name: descricaoBreve, 
@@ -737,7 +769,8 @@ async function iniciarBot(tentativa = 1, forceRestart = false) {
         whatsappClient = await create({
             sessionId: 'my-session', headless: true, qrTimeout: 0, authTimeout: 0,
             sessionDataPath: SESSION_DATA_PATH, skipUpdateCheck: true, logConsole: false, 
-            executablePath: process.env.CHROME_BIN || '/usr/bin/chromium-browser', 
+            //executablePath: process.env.CHROME_BIN || '/usr/bin/chromium-browser',
+            executablePath: process.env.CHROME_BIN || 'C:/Program Files/Google/Chrome/Application/chrome.exe',
             qrLogSkip: false, qrFormat: 'base64', multiDevice: true, 
             args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-accelerated-2d-canvas','--no-first-run','--no-zygote','--disable-gpu'],
             launchTimeout: 120000, waitForRipeSession: true, killProcessOnBrowserClose: true,
@@ -968,7 +1001,7 @@ async function handleMessageLogic(client, message) {
         await sendAndLogText(client, sender, "⏳ Processando sua solicitação e buscando seu usuário no GLPI...");
         await client.simulateTyping(sender, true);
         const resultadoChamado = await criarChamado(
-            dados.nomeRequisitante, dados.descricaoBreve, dados.descricaoDetalhada, dados.anexos || []
+            dados.nomeRequisitante, dados.descricaoBreve, dados.descricaoDetalhada, sender, dados.anexos || [], null, null
         );
         await client.simulateTyping(sender, false);
 
@@ -1009,8 +1042,11 @@ async function handleMessageLogic(client, message) {
         const selectedUser = dados.potentialGlpiUsers[selection - 1];
         await sendAndLogText(client, sender, `⏳ Você selecionou "${selectedUser.firstName}${selectedUser.lastNameOrFullName ? ' '+selectedUser.lastNameOrFullName : ''}". Criando o chamado...`);
         await client.simulateTyping(sender, true);
+        
+        let selectedUserNameForLink = selectedUser.firstName;
+        if (selectedUser.lastNameOrFullName && selectedUser.lastNameOrFullName !== selectedUser.firstName) selectedUserNameForLink += ` ${selectedUser.lastNameOrFullName}`;
         const resultadoFinalChamado = await criarChamado(
-            dados.nomeRequisitante, dados.descricaoBreve, dados.descricaoDetalhada, dados.anexos || [], selectedUser.id 
+            dados.nomeRequisitante, dados.descricaoBreve, dados.descricaoDetalhada, sender, dados.anexos || [], selectedUser.id, selectedUserNameForLink
         );
         await client.simulateTyping(sender, false);
         if (resultadoFinalChamado && resultadoFinalChamado.id) {
