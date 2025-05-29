@@ -752,7 +752,7 @@ async function iniciarBot(tentativa = 1, forceRestart = false) {
     if (!config.glpi || !config.glpi.url || !config.glpi.appToken || !config.glpi.userToken) {
         console.error(`❌ Bot não iniciado (Tentativa ${tentativa}) - Configuração do GLPI incompleta.`);
         broadcastLog('Configuração do GLPI incompleta. Verifique a interface web.', 'error');
-        const intervalo = Math.min(10000 * Math.pow(1.5, tentativa -1), 600000); 
+        const intervalo = 15000; 
         console.log(`🔄 Tentando recarregar configuração e reiniciar bot em ${intervalo / 1000} segundos...`);
         setTimeout(() => {
             try {
@@ -790,7 +790,7 @@ async function iniciarBot(tentativa = 1, forceRestart = false) {
         whatsappClient = null; 
         broadcastLog(`Erro ao iniciar WhatsApp: ${error.message}. Tentando novamente...`, 'error');
         broadcastStatus(); 
-        const intervaloErro = Math.min(15000 * Math.pow(1.5, tentativa -1), 600000); 
+        const intervaloErro = 15000; 
         console.log(`🔄 Reiniciando o bot devido a erro em ${intervaloErro / 1000} segundos...`);
         setTimeout(() => {
             iniciarBot(tentativa + 1, false); 
