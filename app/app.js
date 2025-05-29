@@ -400,8 +400,7 @@ async function consultarChamadoGLPI(ticket_id) {
 
 async function criarChamado(nomeRequisitante, descricaoBreve, descricaoDetalhada, numeroTelefone, anexosPaths = [], specificUserId = null, selectedGlpiUserName = null) {
     let session_token = null;
-    const arquivosParaAnexarSeparadamente = [];
-    const arquivosProcessadosParaExclusao = []; 
+    const arquivosParaAnexarSeparadamente = [...anexosPaths]; // Clona para não modificar o original se necessário, e já é a lista que queremos
     let glpiUserNameForLink = null; // Para armazenar o nome do usuário GLPI se encontrado nesta chamada
 
     try {
@@ -474,24 +473,20 @@ async function criarChamado(nomeRequisitante, descricaoBreve, descricaoDetalhada
         conteudoChamadoHTML += infoSolicitanteHTML;
 
         for (const anexoPath of anexosPaths) {
-            arquivosProcessadosParaExclusao.push(anexoPath); 
             const mimeType = mime.lookup(anexoPath);
             
-            // Adiciona todos os arquivos para serem anexados separadamente
-            arquivosParaAnexarSeparadamente.push(anexoPath);
-
             if (mimeType && mimeType.startsWith('image/')) {
                 try {
-                    const fileContentBase64 = fs.readFileSync(anexoPath, { encoding: 'base64' });
+                    const fileContentBase64 = await fs.promises.readFile(anexoPath, { encoding: 'base64' });
                     const imageTag = `<p><img src="data:${mimeType};base64,${fileContentBase64}" alt="Anexo de Imagem ${path.basename(anexoPath)}" style="max-width: 600px; height: auto; border: 1px solid #ddd; padding: 5px; margin-top:10px;" /></p>`;
                     conteudoChamadoHTML += imageTag;
                     console.log(`🖼️ Imagem ${path.basename(anexoPath)} incorporada no chamado.`);
                 } catch (imgError) {
                     console.error(`❌ Erro ao ler ou incorporar imagem ${anexoPath}:`, imgError);
-                    // A imagem já foi adicionada a arquivosParaAnexarSeparadamente, então será tratada como anexo normal
+                    // A imagem já está em arquivosParaAnexarSeparadamente (pois anexosPaths foi clonado no início),
+                    // então será tratada como anexo normal mesmo se a incorporação falhar.
                 }
             }
-            // Não há 'else' aqui, pois todos os arquivos (imagens ou não) já foram adicionados a arquivosParaAnexarSeparadamente
         }
         // A antiga seção 'infoRemetente' foi substituída e integrada acima.
 
@@ -535,19 +530,7 @@ async function criarChamado(nomeRequisitante, descricaoBreve, descricaoDetalhada
             error.stack
         );
         return null;
-    } finally {
-        if (arquivosProcessadosParaExclusao.length > 0) {
-            console.log(`🗑️ Limpando ${arquivosProcessadosParaExclusao.length} arquivo(s) temporário(s)...`);
-            for (const anexoPath of arquivosProcessadosParaExclusao) {
-                 if (fs.existsSync(anexoPath)) {
-                    try {
-                        fs.unlinkSync(anexoPath);
-                    } catch (errUnlink) {
-                        console.error(`❌ Erro ao remover arquivo local ${anexoPath}:`, errUnlink);
-                    }
-                }
-            }
-        }
+    } finally { // A limpeza dos arquivos agora é feita pela limpeza da pasta de sessão em handleMessageLogic
         if (session_token) {
             await encerrarSessaoGLPI(session_token);
         }
@@ -647,6 +630,23 @@ function mapearStatus(statusCode) {
     return statusMap[statusCode] || `Desconhecido (${statusCode})`;
 }
 
+function gerarNomePastaSessaoAnexos() {
+    return `${moment().format('YYYYMMDDHHmmssSSS')}_${gerarStringAleatoria(8)}`;
+}
+
+async function limparPastaSessaoAnexos(sessionPath) {
+    if (sessionPath && fs.existsSync(sessionPath)) {
+        console.log(`🗑️ Limpando pasta de sessão de anexos: ${sessionPath}`);
+        try {
+            await fs.promises.rm(sessionPath, { recursive: true, force: true });
+            console.log(`✅ Pasta de sessão de anexos ${sessionPath} limpa com sucesso.`);
+        } catch (err) {
+            console.error(`❌ Erro ao limpar pasta de sessão de anexos ${sessionPath}:`, err);
+        }
+    } else if (sessionPath) {
+        console.log(`ℹ️ Pasta de sessão de anexos ${sessionPath} não encontrada para limpeza (pode já ter sido limpa ou nunca criada).`);
+    }
+}
 // ==============================================
 // BOT WHATSAPP
 // ==============================================
@@ -672,12 +672,14 @@ async function processMessageSafe(client, message) {
         await handleMessageLogic(client, message); 
     } catch (error) {
         console.error("❌ Erro crítico no processamento da mensagem para", sender, ":", error);
+        const sessionPathToClean = estadoUsuario[sender]?.dadosTemporarios?.attachmentSessionPath;
         try {
             await sendAndLogText(client, sender, "❌ Ocorreu um erro inesperado. Por favor, tente novamente mais tarde ou digite # para recomeçar.");
         } catch (sendError) {
             console.error("❌ Falha ao enviar mensagem de erro para o usuário:", sendError);
         }
         delete usuariosAtendidos[sender];
+        await limparPastaSessaoAnexos(sessionPathToClean); // Limpa a pasta antes de deletar os dados temporários
         delete estadoUsuario[sender];
         if (timeoutSessoes[sender]) {
             clearTimeout(timeoutSessoes[sender]);
@@ -696,8 +698,10 @@ let estadoUsuario = {};
 async function encerrarConversaInativa(client, sender) {
     try {
         if (usuariosAtendidos[sender] || estadoUsuario[sender]) { 
+            const sessionPathToClean = estadoUsuario[sender]?.dadosTemporarios?.attachmentSessionPath;
             await sendAndLogText(client, sender, "⏳ Sua sessão foi encerrada automaticamente devido à inatividade. Se precisar de ajuda, envie qualquer mensagem para iniciar uma nova conversa.");
             delete usuariosAtendidos[sender];
+            await limparPastaSessaoAnexos(sessionPathToClean);
             delete estadoUsuario[sender];
             if (timeoutSessoes[sender]) {
                  clearTimeout(timeoutSessoes[sender]);
@@ -895,10 +899,12 @@ async function handleMessageLogic(client, message) {
     reiniciarTimerInatividade(client, sender);
 
     if (body.toLowerCase() === "#" || body.toLowerCase() === "cancelar") {
+        const sessionPathToClean = estadoUsuario[sender]?.dadosTemporarios?.attachmentSessionPath;
         if (timeoutSessoes[sender]) clearTimeout(timeoutSessoes[sender]);
         delete timeoutSessoes[sender];
         delete usuariosAtendidos[sender]; 
-        delete estadoUsuario[sender];     
+        delete estadoUsuario[sender];
+        await limparPastaSessaoAnexos(sessionPathToClean);
         await sendAndLogText(client, sender, "🔚 Atendimento encerrado. Se precisar de algo mais, basta enviar uma mensagem. 👋");
         console.log(`🛑 Atendimento encerrado manualmente para ${sender}`);
         return;
@@ -927,8 +933,18 @@ async function handleMessageLogic(client, message) {
     if (currentState === "aguardando_opcao_inicial") {
         if (body === "1") {
             estadoUsuario[sender].estado = "abrir_chamado_descricao_breve";
-            // Initialize dadosTemporarios for the new ticket creation process
-            estadoUsuario[sender].dadosTemporarios = { anexos: [] };
+            const attachmentSessionId = gerarNomePastaSessaoAnexos();
+            const attachmentSessionPath = path.join(pastaDestino, attachmentSessionId);
+            try {
+                await fs.promises.mkdir(attachmentSessionPath, { recursive: true });
+                estadoUsuario[sender].dadosTemporarios = { anexos: [], attachmentSessionPath: attachmentSessionPath };
+                console.log(`📂 Pasta de sessão de anexos criada: ${attachmentSessionPath} para ${sender}`);
+            } catch (mkdirError) {
+                console.error(`❌ Erro ao criar pasta de sessão de anexos ${attachmentSessionPath}:`, mkdirError);
+                await sendAndLogText(client, sender, "❌ Ocorreu um erro interno ao iniciar o processo de chamado. Por favor, tente novamente.");
+                estadoUsuario[sender].estado = "aguardando_opcao_inicial"; // Volta ao estado inicial
+                return;
+            }
             await sendAndLogText(client, sender, "📝 Entendido! Para abrir um novo chamado, por favor, descreva o problema em poucas palavras (será o título do chamado).");
         } else if (body === "2") {
             estadoUsuario[sender].estado = "acompanhar_chamado_id";
@@ -971,11 +987,16 @@ async function handleMessageLogic(client, message) {
 
         if (message.mimetype) { 
             try {
+                if (!dados.attachmentSessionPath || !fs.existsSync(dados.attachmentSessionPath)) {
+                    console.error(`❌ Pasta de sessão de anexos não encontrada para ${sender}: ${dados.attachmentSessionPath}. Não é possível salvar o anexo.`);
+                    await sendAndLogText(client, sender, "❌ Ocorreu um erro ao preparar para receber seu anexo. Por favor, digite *0* e tente abrir o chamado novamente.");
+                    return;
+                }
                 const mediaData = await decryptMedia(message);
                 const fileExtension = mime.extension(message.mimetype) || 'bin';
                 const fileName = gerarNomeUnico(fileExtension);
-                const filePath = path.join(pastaDestino, fileName);
-                fs.writeFileSync(filePath, mediaData);
+                const filePath = path.join(dados.attachmentSessionPath, fileName); // Salva na pasta da sessão
+                await fs.promises.writeFile(filePath, mediaData);
                 console.log(`📎 Anexo salvo localmente: ${filePath} para ${sender}`);
                 if (!dados.anexos) dados.anexos = [];
                 dados.anexos.push(filePath); 
@@ -998,39 +1019,56 @@ async function handleMessageLogic(client, message) {
             return; 
         }
         dados.nomeRequisitante = body; 
+        
+        const currentAttachmentSessionPath = dados.attachmentSessionPath; // Guardar para o finally
+        let multipleUsersWereFound = false;
+
         await sendAndLogText(client, sender, "⏳ Processando sua solicitação e buscando seu usuário no GLPI...");
         await client.simulateTyping(sender, true);
-        const resultadoChamado = await criarChamado(
-            dados.nomeRequisitante, dados.descricaoBreve, dados.descricaoDetalhada, sender, dados.anexos || [], null, null
-        );
-        await client.simulateTyping(sender, false);
+        try {
+            const resultadoChamado = await criarChamado(
+                dados.nomeRequisitante, dados.descricaoBreve, dados.descricaoDetalhada, sender, dados.anexos || [], null, null
+            );
+            await client.simulateTyping(sender, false);
 
-        if (resultadoChamado && resultadoChamado.multipleUsersFound) {
-            dados.potentialGlpiUsers = resultadoChamado.users; 
-            dados.descricaoBreve = resultadoChamado.descricaoBreve; 
-            dados.descricaoDetalhada = resultadoChamado.descricaoDetalhada;
-            dados.anexos = resultadoChamado.anexos;
-            dados.nomeRequisitante = resultadoChamado.originalNomeRequisitante;
-            estadoUsuario[sender].estado = "abrir_chamado_selecionar_usuario_glpi";
-            let userListMessage = "👥 Encontrei mais de um registro com um nome parecido. Por favor, selecione qual deles é você:\n\n";
-            resultadoChamado.users.forEach((user, index) => {
-                let displayName = user.firstName;
-                if (user.lastNameOrFullName && user.lastNameOrFullName !== user.firstName) displayName += ` ${user.lastNameOrFullName}`;
-                if (user.username) displayName += ` (${user.username})`;
-                userListMessage += `${index + 1} - ${displayName}\n`;
-            });
-            userListMessage += "\nDigite o número correspondente ou *#* para cancelar.";
-            await sendAndLogText(client, sender, userListMessage);
-        } else if (resultadoChamado && resultadoChamado.id) { 
-            await sendAndLogText(client, sender, `✅ Chamado criado com sucesso! O número do seu chamado é: *${resultadoChamado.id}*.\n\nObrigado! Se precisar de mais alguma coisa, é só chamar.`);
-            delete estadoUsuario[sender].dadosTemporarios;
-            estadoUsuario[sender].estado = "aguardando_opcao_inicial"; 
-            await new Promise(resolve => setTimeout(resolve, 1500));
-            await sendAndLogText(client, sender, "Como posso te ajudar agora?\n\n1️⃣ - Abrir novo chamado\n2️⃣ - Acompanhar chamado existente\n0️⃣ - Encerrar conversa");
-        } else { 
-            await sendAndLogText(client, sender, "❌ Desculpe, ocorreu um erro e não foi possível criar seu chamado. Por favor, tente novamente mais tarde.");
+            if (resultadoChamado && resultadoChamado.multipleUsersFound) {
+                multipleUsersWereFound = true; // Sinaliza que a pasta não deve ser limpa ainda
+                dados.potentialGlpiUsers = resultadoChamado.users; 
+                dados.descricaoBreve = resultadoChamado.descricaoBreve; 
+                dados.descricaoDetalhada = resultadoChamado.descricaoDetalhada;
+                dados.anexos = resultadoChamado.anexos; // Mantém os anexos
+                dados.nomeRequisitante = resultadoChamado.originalNomeRequisitante;
+                // dados.attachmentSessionPath é mantido
+                estadoUsuario[sender].estado = "abrir_chamado_selecionar_usuario_glpi";
+                let userListMessage = "👥 Encontrei mais de um registro com um nome parecido. Por favor, selecione qual deles é você:\n\n";
+                resultadoChamado.users.forEach((user, index) => {
+                    let displayName = user.firstName;
+                    if (user.lastNameOrFullName && user.lastNameOrFullName !== user.firstName) displayName += ` ${user.lastNameOrFullName}`;
+                    if (user.username) displayName += ` (${user.username})`;
+                    userListMessage += `${index + 1} - ${displayName}\n`;
+                });
+                userListMessage += "\nDigite o número correspondente ou *#* para cancelar.";
+                await sendAndLogText(client, sender, userListMessage);
+            } else if (resultadoChamado && resultadoChamado.id) { 
+                await sendAndLogText(client, sender, `✅ Chamado criado com sucesso! O número do seu chamado é: *${resultadoChamado.id}*.\n\nObrigado! Se precisar de mais alguma coisa, é só chamar.`);
+                delete estadoUsuario[sender].dadosTemporarios; // Limpa dados, incluindo attachmentSessionPath implicitamente
+                estadoUsuario[sender].estado = "aguardando_opcao_inicial"; 
+                await new Promise(resolve => setTimeout(resolve, 1500));
+                await sendAndLogText(client, sender, "Como posso te ajudar agora?\n\n1️⃣ - Abrir novo chamado\n2️⃣ - Acompanhar chamado existente\n0️⃣ - Encerrar conversa");
+            } else { 
+                await sendAndLogText(client, sender, "❌ Desculpe, ocorreu um erro e não foi possível criar seu chamado. Por favor, tente novamente mais tarde.");
+                delete estadoUsuario[sender].dadosTemporarios;
+                estadoUsuario[sender].estado = "aguardando_opcao_inicial";
+            }
+        } catch (errorCriarChamado) {
+            console.error(`❌ Erro durante a chamada a criarChamado (nome requisitante) para ${sender}:`, errorCriarChamado);
+            await sendAndLogText(client, sender, "❌ Ocorreu um erro interno crítico ao tentar registrar seu chamado. A equipe de suporte foi notificada.");
             delete estadoUsuario[sender].dadosTemporarios;
             estadoUsuario[sender].estado = "aguardando_opcao_inicial";
+        } finally {
+            if (!multipleUsersWereFound) { // Só limpa a pasta se o fluxo não continuar para seleção de usuário
+                await limparPastaSessaoAnexos(currentAttachmentSessionPath);
+            }
         }
     }
     else if (currentState === "abrir_chamado_selecionar_usuario_glpi") {
@@ -1039,25 +1077,34 @@ async function handleMessageLogic(client, message) {
             await sendAndLogText(client, sender, `❌ Opção inválida. Por favor, digite um número entre 1 e ${dados.potentialGlpiUsers.length}.`);
             return;
         }
+
+        const currentAttachmentSessionPath = dados.attachmentSessionPath; // Guardar para o finally
         const selectedUser = dados.potentialGlpiUsers[selection - 1];
         await sendAndLogText(client, sender, `⏳ Você selecionou "${selectedUser.firstName}${selectedUser.lastNameOrFullName ? ' '+selectedUser.lastNameOrFullName : ''}". Criando o chamado...`);
         await client.simulateTyping(sender, true);
         
-        let selectedUserNameForLink = selectedUser.firstName;
-        if (selectedUser.lastNameOrFullName && selectedUser.lastNameOrFullName !== selectedUser.firstName) selectedUserNameForLink += ` ${selectedUser.lastNameOrFullName}`;
-        const resultadoFinalChamado = await criarChamado(
-            dados.nomeRequisitante, dados.descricaoBreve, dados.descricaoDetalhada, sender, dados.anexos || [], selectedUser.id, selectedUserNameForLink
-        );
-        await client.simulateTyping(sender, false);
-        if (resultadoFinalChamado && resultadoFinalChamado.id) {
-            await sendAndLogText(client, sender, `✅ Chamado criado com sucesso e associado a você! O número do seu chamado é: *${resultadoFinalChamado.id}*.\n\nObrigado!`);
-        } else {
-            await sendAndLogText(client, sender, "❌ Desculpe, ocorreu um erro ao tentar criar o chamado após a seleção.");
+        try {
+            let selectedUserNameForLink = selectedUser.firstName;
+            if (selectedUser.lastNameOrFullName && selectedUser.lastNameOrFullName !== selectedUser.firstName) selectedUserNameForLink += ` ${selectedUser.lastNameOrFullName}`;
+            const resultadoFinalChamado = await criarChamado(
+                dados.nomeRequisitante, dados.descricaoBreve, dados.descricaoDetalhada, sender, dados.anexos || [], selectedUser.id, selectedUserNameForLink
+            );
+            await client.simulateTyping(sender, false);
+            if (resultadoFinalChamado && resultadoFinalChamado.id) {
+                await sendAndLogText(client, sender, `✅ Chamado criado com sucesso e associado a você! O número do seu chamado é: *${resultadoFinalChamado.id}*.\n\nObrigado!`);
+            } else {
+                await sendAndLogText(client, sender, "❌ Desculpe, ocorreu um erro ao tentar criar o chamado após a seleção.");
+            }
+        } catch (errorCriarChamadoFinal) {
+            console.error(`❌ Erro durante a chamada a criarChamado (selecionar usuário) para ${sender}:`, errorCriarChamadoFinal);
+            await sendAndLogText(client, sender, "❌ Ocorreu um erro interno crítico ao tentar registrar seu chamado após a seleção. A equipe de suporte foi notificada.");
+        } finally {
+            await limparPastaSessaoAnexos(currentAttachmentSessionPath); // Limpa a pasta da sessão
+            delete estadoUsuario[sender].dadosTemporarios; 
+            estadoUsuario[sender].estado = "aguardando_opcao_inicial";
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            await sendAndLogText(client, sender, "Como posso te ajudar agora?\n\n1️⃣ - Abrir novo chamado\n2️⃣ - Acompanhar chamado existente\n0️⃣ - Encerrar conversa");
         }
-        delete estadoUsuario[sender].dadosTemporarios; 
-        estadoUsuario[sender].estado = "aguardando_opcao_inicial";
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        await sendAndLogText(client, sender, "Como posso te ajudar agora?\n\n1️⃣ - Abrir novo chamado\n2️⃣ - Acompanhar chamado existente\n0️⃣ - Encerrar conversa");
     }
     else if (currentState === "acompanhar_chamado_id") {
         if (!body || !/^\d+$/.test(body)) { 
@@ -1084,8 +1131,10 @@ async function handleMessageLogic(client, message) {
     }
      else {
         console.warn(`⚠️ Estado não reconhecido ou fluxo quebrado para ${sender}: ${currentState}. Redefinindo.`);
+        const sessionPathToClean = estadoUsuario[sender]?.dadosTemporarios?.attachmentSessionPath;
         await sendAndLogText(client, sender, "❌ Ops! Algo não saiu como esperado. Vamos recomeçar.");
         delete usuariosAtendidos[sender]; delete estadoUsuario[sender];
+        await limparPastaSessaoAnexos(sessionPathToClean);
         if (timeoutSessoes[sender]) clearTimeout(timeoutSessoes[sender]); delete timeoutSessoes[sender];
         return; 
     }
