@@ -17,5 +17,6 @@ WORKDIR /home/node/app
 COPY package*.json ./
 RUN npm install
 COPY --chown=node:node . .
+ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 EXPOSE 3000
 CMD ["npm", "start"]
