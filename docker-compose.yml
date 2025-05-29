@@ -11,3 +11,13 @@ services:
     ports:
       - "3000:3000"
     restart: unless-stopped
+    stop_grace_period: 45s # Aumentado para dar mais tempo para o Chromium fechar
+    volumes:
+      - whatsapp_session_data:/home/node/app/whatsapp_session_data
+      - glpi_config_file:/home/node/app/glpi_config.json
+      - anexos_data:/home/node/app/anexos
+
+volumes:
+  whatsapp_session_data:
+  glpi_config_file:
+  anexos_data:
