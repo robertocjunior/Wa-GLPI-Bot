@@ -41,27 +41,6 @@ process.on('uncaughtException', (err) => {
     process.exit(1);
 });
 
-// Encerramento Gracioso
-async function gracefulShutdown(signal) {
-  console.log(`[${new Date().toISOString()}] Recebido ${signal}. Encerrando o bot graciosamente...`);
-  if (whatsappClient) {
-    try {
-      console.log(`[${new Date().toISOString()}] Tentando fechar o cliente WhatsApp (kill)...`);
-      // Usar kill() é geralmente mais eficaz para garantir que o browser Puppeteer feche.
-      await whatsappClient.kill();
-      console.log(`[${new Date().toISOString()}] Cliente WhatsApp (kill) finalizado.`);
-    } catch (e) {
-      console.error(`[${new Date().toISOString()}] Erro ao tentar fechar (kill) o cliente WhatsApp:`, e.message);
-    }
-  }
-  // Adicione aqui qualquer outra limpeza necessária
-  console.log(`[${new Date().toISOString()}] Processo Node.js encerrando.`);
-  process.exit(0);
-}
-
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-
 // Função para carregar ou criar configuração
 function loadOrCreateConfig() {
     if (fs.existsSync(configFile)) {
@@ -773,7 +752,7 @@ async function iniciarBot(tentativa = 1, forceRestart = false) {
     if (!config.glpi || !config.glpi.url || !config.glpi.appToken || !config.glpi.userToken) {
         console.error(`❌ Bot não iniciado (Tentativa ${tentativa}) - Configuração do GLPI incompleta.`);
         broadcastLog('Configuração do GLPI incompleta. Verifique a interface web.', 'error');
-        const intervalo = 15000; // Fixo em 15 segundos
+        const intervalo = Math.min(10000 * Math.pow(1.5, tentativa -1), 600000); 
         console.log(`🔄 Tentando recarregar configuração e reiniciar bot em ${intervalo / 1000} segundos...`);
         setTimeout(() => {
             try {
@@ -811,7 +790,7 @@ async function iniciarBot(tentativa = 1, forceRestart = false) {
         whatsappClient = null; 
         broadcastLog(`Erro ao iniciar WhatsApp: ${error.message}. Tentando novamente...`, 'error');
         broadcastStatus(); 
-        const intervaloErro = 15000; // Fixo em 15 segundos
+        const intervaloErro = Math.min(15000 * Math.pow(1.5, tentativa -1), 600000); 
         console.log(`🔄 Reiniciando o bot devido a erro em ${intervaloErro / 1000} segundos...`);
         setTimeout(() => {
             iniciarBot(tentativa + 1, false); 
