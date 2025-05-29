@@ -773,8 +773,8 @@ async function iniciarBot(tentativa = 1, forceRestart = false) {
         whatsappClient = await create({
             sessionId: 'my-session', headless: true, qrTimeout: 0, authTimeout: 0,
             sessionDataPath: SESSION_DATA_PATH, skipUpdateCheck: true, logConsole: false, 
-            //executablePath: process.env.CHROME_BIN || '/usr/bin/chromium-browser',
-            executablePath: process.env.CHROME_BIN || 'C:/Program Files/Google/Chrome/Application/chrome.exe',
+            executablePath: process.env.CHROME_BIN || '/usr/bin/chromium-browser',
+            //executablePath: process.env.CHROME_BIN || 'C:/Program Files/Google/Chrome/Application/chrome.exe',
             qrLogSkip: false, qrFormat: 'base64', multiDevice: true, 
             args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-accelerated-2d-canvas','--no-first-run','--no-zygote','--disable-gpu'],
             launchTimeout: 120000, waitForRipeSession: true, killProcessOnBrowserClose: true,
