@@ -1155,147 +1155,238 @@ async function handleMessageLogic(client, message) {
 
                 if (imgMatchSolucao && imgMatchSolucao[1]) {
                     const imageUrlRelativeSolucao = imgMatchSolucao[1];
-                    // Verifica se a URL já é absoluta (http/https) ou se precisa ser construída
                     const absoluteImageUrlSolucao = imageUrlRelativeSolucao.startsWith('http') ? imageUrlRelativeSolucao : new URL(imageUrlRelativeSolucao, config.glpi.url).href;
+                    const textContentAntesDaImagem = htmlContentSolucao.substring(0, imgMatchSolucao.index).replace(/<[^>]*>/g, '').trim();
+                    const textContentDepoisDaImagem = htmlContentSolucao.substring(imgMatchSolucao.index + imgMatchSolucao[0].length).replace(/<[^>]*>/g, '').trim();
+                    const combinedTextContent = [textContentAntesDaImagem, textContentDepoisDaImagem].filter(Boolean).join(' ').trim();
 
-                    const textContentForCaptionSolucao = htmlContentSolucao.replace(imgRegexSolucao, '').replace(/<[^>]*>/g, '').trim();
-                    let captionSolucao = `📝 *Solução:* ${textContentForCaptionSolucao}`;
-                    if (captionSolucao.length > 1024) captionSolucao = captionSolucao.substring(0, 1021) + "...";
-
-                    let imageSessionTokenSolucao = null;
-                    try {
-                        console.log(`📝 Baixando imagem da solução: ${absoluteImageUrlSolucao}`);
-                        // Só inicia sessão GLPI se for URL interna
-                        if (absoluteImageUrlSolucao.startsWith(config.glpi.url)) {
-                            imageSessionTokenSolucao = await iniciarSessaoGLPI();
-                            if (!imageSessionTokenSolucao) throw new Error("Falha ao obter token de sessão para baixar mídia da solução (interna).");
+                    let isExternalDomainSolucao = true;
+                    if (config.glpi && config.glpi.url) {
+                        try {
+                            const glpiHostname = new URL(config.glpi.url).hostname;
+                            const imageHostname = new URL(absoluteImageUrlSolucao).hostname;
+                            if (glpiHostname === imageHostname) {
+                                isExternalDomainSolucao = false; // É do mesmo domínio, tratar como interna para download
+                            }
+                        } catch (urlParseError) {
+                            console.warn(`⚠️ Erro ao parsear URLs para verificação de domínio (solução): ${absoluteImageUrlSolucao} vs ${config.glpi.url}. Erro: ${urlParseError.message}. Recorrendo à verificação 'startsWith'.`);
+                            isExternalDomainSolucao = !absoluteImageUrlSolucao.startsWith(config.glpi.url); // Fallback
                         }
+                    } else {
+                        isExternalDomainSolucao = !absoluteImageUrlSolucao.startsWith(config.glpi.url); // Fallback se config.glpi.url não estiver definido
+                    }
 
-                        const imageResponseSolucao = await axios.get(absoluteImageUrlSolucao, {
-                            headers: absoluteImageUrlSolucao.startsWith(config.glpi.url) ? 
-                                { "App-Token": config.glpi.appToken, "Session-Token": imageSessionTokenSolucao } :
-                                { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" },
-                            responseType: 'arraybuffer'
-                        });
-                        
-                        // Encerra a sessão GLPI se foi iniciada e usada
-                        if (imageSessionTokenSolucao) {
-                            await encerrarSessaoGLPI(imageSessionTokenSolucao);
-                            imageSessionTokenSolucao = null;
+                    if (isExternalDomainSolucao) {
+                        // Tenta baixar e enviar imagem externa
+                        let captionExternaSolucao = `📝 *Solução:*`;
+                        if (combinedTextContent) {
+                            captionExternaSolucao += ` ${combinedTextContent}`;
                         }
+                        if (captionExternaSolucao.length > 1024) captionExternaSolucao = captionExternaSolucao.substring(0, 1021) + "...";
 
-                        const imageBase64Solucao = Buffer.from(imageResponseSolucao.data, 'binary').toString('base64');
-                        const mimeTypeSolucao = imageResponseSolucao.headers['content-type'] || mime.lookup(absoluteImageUrlSolucao) || 'image/jpeg';
-                        const dataUriSolucao = `data:${mimeTypeSolucao};base64,${imageBase64Solucao}`;
-                        
-                        let filenameSolucao = 'solucao.jpg';
-                        let descriptiveNameSolucao = "Solução"; // Default descriptive name
-                        const altMatchSolucao = htmlContentSolucao.match(/<img[^>]+alt="([^"]+)"[^>]*>/i);
-                        if (altMatchSolucao && altMatchSolucao[1] && altMatchSolucao[1].trim()) {
-                            descriptiveNameSolucao = altMatchSolucao[1].trim();
-                        }
+                        try {
+                            console.log(`🌐 Baixando imagem externa da solução: ${absoluteImageUrlSolucao}`);
+                            const imageResponse = await axios.get(absoluteImageUrlSolucao, {
+                                headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" },
+                                responseType: 'arraybuffer'
+                            });
 
-                        filenameSolucao = descriptiveNameSolucao; // Start with alt text as filename base
-                        let finalMimeTypeSolucao = imageResponseSolucao.headers['content-type'];
-                        const isGlpiDocumentScriptSolucao = absoluteImageUrlSolucao.includes("document.send.php");
+                            const imageBase64 = Buffer.from(imageResponse.data, 'binary').toString('base64');
+                            
+                            let descriptiveName = "Imagem Externa Solucao";
+                            try {
+                                const urlPath = new URL(absoluteImageUrlSolucao).pathname;
+                                const base = path.basename(urlPath);
+                                if (base && base !== '/') descriptiveName = base;
+                            } catch (e) { /* ignore, use default */ }
+                            let filename = descriptiveName;
 
-                        if (isGlpiDocumentScriptSolucao) {
-                            const docIdMatchSolucao = absoluteImageUrlSolucao.match(/docid=(\d+)/);
-                            if (docIdMatchSolucao && docIdMatchSolucao[1]) {
-                                const docId = docIdMatchSolucao[1];
-                                let metadataSessionTokenSolucao = null; 
-                                try {
-                                    console.log(`ℹ️ Script GLPI (solução) detectado com docid=${docId}. Iniciando sessão para buscar metadados.`);
-                                    metadataSessionTokenSolucao = await iniciarSessaoGLPI();
-                                    if (!metadataSessionTokenSolucao) {
-                                        throw new Error("Falha ao obter token de sessão para metadados do documento GLPI (solução).");
-                                    }
+                            let finalMimeType = imageResponse.headers['content-type'];
+                            const buffer = Buffer.from(imageResponse.data, 'binary');
+                            const fileTypeInfo = await fileTypeFromBuffer(buffer);
 
-                                    const docMetaUrl = `${config.glpi.url}/Document/${docId}`;
-                                    console.log(`📄 Buscando metadados de (solução): ${docMetaUrl}`);
-                                    const docMetaResponse = await axios.get(docMetaUrl, {
-                                        headers: { "App-Token": config.glpi.appToken, "Session-Token": metadataSessionTokenSolucao }
-                                    });
-                                    if (docMetaResponse.data && docMetaResponse.data.filename && docMetaResponse.data.mime) {
-                                        filenameSolucao = docMetaResponse.data.filename;
-                                        descriptiveNameSolucao = filenameSolucao; // Atualiza nome descritivo com o da API
-                                        finalMimeTypeSolucao = docMetaResponse.data.mime;
-                                        console.log(`✅ Metadados do Documento (solução) ID ${docId} obtidos: Nome='${filenameSolucao}', Tipo='${finalMimeTypeSolucao}'`);
-                                    } else {
-                                        console.warn(`⚠️ Metadados do Documento (solução) ID ${docId} incompletos. Fallback para ALT/Content-Type.`);
-                                        finalMimeTypeSolucao = mime.lookup(descriptiveNameSolucao) || imageResponseSolucao.headers['content-type'];
-                                    }
-                                } catch (docMetaError) {
-                                    console.error(`❌ Erro ao buscar metadados do Documento (solução) ID ${docId}: ${docMetaError.message}. Fallback.`);
-                                    finalMimeTypeSolucao = mime.lookup(descriptiveNameSolucao) || imageResponseSolucao.headers['content-type'];
-                                } finally {
-                                    if (metadataSessionTokenSolucao) await encerrarSessaoGLPI(metadataSessionTokenSolucao);
-                                    console.log(`ℹ️ Sessão de metadados para docid=${docId} (solução) encerrada.`);
+                            if (fileTypeInfo && fileTypeInfo.mime && !fileTypeInfo.mime.includes('unknown')) {
+                                finalMimeType = fileTypeInfo.mime;
+                            } else if (!finalMimeType || finalMimeType.includes('unknown') || finalMimeType.startsWith('text/html') || finalMimeType === 'application/octet-stream') {
+                                const mimeFromDescName = mime.lookup(descriptiveName);
+                                if (mimeFromDescName && !mimeFromDescName.includes('unknown') && !mimeFromDescName.startsWith('text/html') && mimeFromDescName !== 'application/octet-stream') {
+                                    finalMimeType = mimeFromDescName;
+                                } else {
+                                    finalMimeType = 'application/octet-stream';
                                 }
-                            } else {
-                                finalMimeTypeSolucao = mime.lookup(descriptiveNameSolucao) || imageResponseSolucao.headers['content-type'];
                             }
-                        } else { // Not a GLPI script, rely on Content-Type or alt
-                            finalMimeTypeSolucao = imageResponseSolucao.headers['content-type'] || mime.lookup(descriptiveNameSolucao);
-                        }
-                        
-                        const bufferSolucao = Buffer.from(imageResponseSolucao.data, 'binary');
-                        const fileTypeInfoSolucao = await fileTypeFromBuffer(bufferSolucao);
-
-                        // Refined Fallback logic for MIME Type
-                        if (fileTypeInfoSolucao && fileTypeInfoSolucao.mime && !fileTypeInfoSolucao.mime.includes('unknown')) {
-                            finalMimeTypeSolucao = fileTypeInfoSolucao.mime;
-                            console.log(`✅ MIME Type para solução determinado por file-type: '${finalMimeTypeSolucao}'`);
-                        } else if (!finalMimeTypeSolucao || finalMimeTypeSolucao.includes('unknown') || (finalMimeTypeSolucao.startsWith('text/html') && !isGlpiDocumentScriptSolucao) || finalMimeTypeSolucao === 'application/octet-stream') {
                             
-                            console.log(`⚠️ MIME Type atual para solução ('${finalMimeTypeSolucao}') é genérico ou HTML inesperado. Tentando inferir do nome descritivo ('${descriptiveNameSolucao}').`);
-                            const mimeFromDescName = mime.lookup(descriptiveNameSolucao);
+                            let finalFilename = filename.replace(/[^a-zA-Z0-9_.-]/g, '_').replace(/\s+/g, '_').replace(/^_+|_+$/g, '');
+                            const currentExt = path.extname(finalFilename);
+                            const determinedExt = mime.extension(finalMimeType);
+
+                            if (determinedExt) {
+                                if (currentExt.toLowerCase() !== `.${determinedExt.toLowerCase()}`) {
+                                    if (currentExt) finalFilename = finalFilename.substring(0, finalFilename.length - currentExt.length);
+                                    finalFilename += `.${determinedExt}`;
+                                }
+                            } else if (!currentExt && fileTypeInfo && fileTypeInfo.ext) {
+                                finalFilename += `.${fileTypeInfo.ext}`;
+                            } else if (!currentExt) { finalFilename += ".dat"; }
+
+                            if (finalFilename.startsWith('.') || finalFilename.length === 0 || finalFilename.toLowerCase() === "imagem_externa_solucao.dat" || finalFilename === "_.dat" || finalFilename === "_") {
+                                finalFilename = `solucao_externa_${moment().format('HHmmss')}${determinedExt ? '.' + determinedExt : '.dat'}`;
+                            }
                             
-                            if (mimeFromDescName && !mimeFromDescName.includes('unknown') && !mimeFromDescName.startsWith('text/html') && mimeFromDescName !== 'application/octet-stream') {
-                                finalMimeTypeSolucao = mimeFromDescName;
-                                console.log(`✅ MIME Type para solução atualizado para '${finalMimeTypeSolucao}' a partir do nome descritivo.`);
-                            } else if (finalMimeTypeSolucao && finalMimeTypeSolucao.startsWith('text/html') && (!mimeFromDescName || mimeFromDescName.startsWith('text/html') || mimeFromDescName.includes('unknown') || mimeFromDescName === 'application/octet-stream')) {
-                                console.log(`ℹ️ Nome descritivo para solução não forneceu um MIME Type melhor. Mantendo '${finalMimeTypeSolucao}'.`);
+                            const dataUri = `data:${finalMimeType};base64,${imageBase64}`;
+
+                            if (finalMimeType.startsWith('image/')) {
+                                await client.sendImage(sender, dataUri, finalFilename, captionExternaSolucao);
+                                console.log(`🖼️ Imagem externa da solução ('${finalFilename}') enviada com legenda para ${sender}.`);
                             } else {
-                                finalMimeTypeSolucao = 'application/octet-stream';
-                                console.log(`ℹ️ MIME Type para solução definido para fallback final: '${finalMimeTypeSolucao}'.`);
+                                let fallbackMsg = captionExternaSolucao + `\n\n📎 Link para conteúdo externo (não pôde ser incorporado como imagem): ${absoluteImageUrlSolucao}`;
+                                await sendAndLogText(client, sender, fallbackMsg);
                             }
+                        } catch (error) {
+                            console.error(`❌ Erro ao processar mídia externa da solução (${absoluteImageUrlSolucao}): ${error.message}.`);
+                            let errorFallbackMsg = captionExternaSolucao + `\n\n⚠️ Falha ao baixar conteúdo externo: ${absoluteImageUrlSolucao}`;
+                            await sendAndLogText(client, sender, errorFallbackMsg);
                         }
+                    } else {
+                        // URL Interna (mesmo domínio do GLPI): lógica de download e envio
+                        const textContentForCaptionSolucao = combinedTextContent;
+                        let captionSolucao = `📝 *Solução:*`;
+                        if (textContentForCaptionSolucao) {
+                            captionSolucao += ` ${textContentForCaptionSolucao}`;
+                        }
+                        if (captionSolucao.length > 1024) captionSolucao = captionSolucao.substring(0, 1021) + "...";
 
-                        let finalFilenameSolucao = filenameSolucao.replace(/[^a-zA-Z0-9_.-]/g, '_').replace(/\s+/g, '_').replace(/^_+|_+$/g, '');
-                        const currentExtSolucao = path.extname(finalFilenameSolucao);
-                        const determinedExtSolucao = mime.extension(finalMimeTypeSolucao);
-                        if (determinedExtSolucao) {
-                            if (currentExtSolucao.toLowerCase() !== `.${determinedExtSolucao.toLowerCase()}`) {
-                                if (currentExtSolucao) finalFilenameSolucao = finalFilenameSolucao.substring(0, finalFilenameSolucao.length - currentExtSolucao.length);
-                                finalFilenameSolucao += `.${determinedExtSolucao}`;
+                        let imageSessionTokenSolucao = null;
+                        try {
+                            console.log(`📝 Baixando imagem da solução: ${absoluteImageUrlSolucao}`);
+                            // Sempre tenta iniciar sessão se for domínio GLPI
+                            imageSessionTokenSolucao = await iniciarSessaoGLPI();
+                            if (!imageSessionTokenSolucao) throw new Error("Falha ao obter token de sessão para baixar mídia da solução (domínio GLPI).");
+                            
+
+                            const imageResponseSolucao = await axios.get(absoluteImageUrlSolucao, {
+                                headers: { // Sempre usa tokens para domínio GLPI
+                                    "App-Token": config.glpi.appToken, 
+                                    "Session-Token": imageSessionTokenSolucao
+                                },
+                                responseType: 'arraybuffer'
+                            });
+                            
+                            if (imageSessionTokenSolucao) {
+                                await encerrarSessaoGLPI(imageSessionTokenSolucao);
+                                imageSessionTokenSolucao = null; 
                             }
-                        } else if (!currentExtSolucao && fileTypeInfoSolucao && fileTypeInfoSolucao.ext) {
-                            finalFilenameSolucao += `.${fileTypeInfoSolucao.ext}`;
-                        } else if (!currentExtSolucao) {
-                            finalFilenameSolucao += ".dat";
-                        }
-                        
-                        if (finalFilenameSolucao.startsWith('.') || finalFilenameSolucao.length === 0 || finalFilenameSolucao.toLowerCase() === "solução.dat" || finalFilenameSolucao === "_.dat" || finalFilenameSolucao === "_") {
-                            finalFilenameSolucao = `anexo_solucao_${moment().format('HHmmss')}${determinedExtSolucao ? '.' + determinedExtSolucao : '.dat'}`;
-                        }
 
-                        if (finalMimeTypeSolucao.startsWith('image/')) {
-                            await client.sendImage(sender, dataUriSolucao, finalFilenameSolucao, captionSolucao);
-                            console.log(`🖼️ Imagem da solução ('${finalFilenameSolucao}') enviada com legenda para ${sender}.`);
-                        } else {
-                            const textFallbackSolucao = htmlContentSolucao.replace(/<[^>]*>/g, '').trim();
-                            await sendAndLogText(client, sender, `📝 *Solução:* ${textFallbackSolucao}\n📎 (Anexo: '${finalFilenameSolucao}' do tipo '${finalMimeTypeSolucao}' não pôde ser exibido diretamente.)`);
-                            console.log(`🚫 Mídia da solução ('${finalFilenameSolucao}', tipo: ${finalMimeTypeSolucao}) não é uma imagem. Enviado como texto/aviso para ${sender}.`);
-                        }
-                    } catch (error) {
-                        console.error(`❌ Erro ao processar mídia da solução para ${sender}: ${error.message}. Detalhes:`, error.response ? error.response.data : '');
-                        const textFallbackSolucao = htmlContentSolucao.replace(/<[^>]*>/g, '').trim();
-                        if (textFallbackSolucao) await sendAndLogText(client, sender, `📝 *Solução (imagem falhou):* ${textFallbackSolucao}`);
-                    } finally {
-                        // Garante que a sessão seja fechada se ainda estiver aberta (ex: erro antes do fechamento condicional)
-                        if (imageSessionTokenSolucao) {
-                            await encerrarSessaoGLPI(imageSessionTokenSolucao);
+                            const imageBase64Solucao = Buffer.from(imageResponseSolucao.data, 'binary').toString('base64');
+                            const mimeTypeSolucao = imageResponseSolucao.headers['content-type'] || mime.lookup(absoluteImageUrlSolucao) || 'image/jpeg';
+                            const dataUriSolucao = `data:${mimeTypeSolucao};base64,${imageBase64Solucao}`;
+                            
+                            let filenameSolucao = 'solucao.jpg';
+                            let descriptiveNameSolucao = "Solução"; 
+                            const altMatchSolucao = htmlContentSolucao.match(/<img[^>]+alt="([^"]+)"[^>]*>/i);
+                            if (altMatchSolucao && altMatchSolucao[1] && altMatchSolucao[1].trim()) {
+                                descriptiveNameSolucao = altMatchSolucao[1].trim();
+                            }
+
+                            filenameSolucao = descriptiveNameSolucao; 
+                            let finalMimeTypeSolucao = imageResponseSolucao.headers['content-type'];
+                            const isGlpiDocumentScriptSolucao = absoluteImageUrlSolucao.includes("document.send.php");
+
+                            if (isGlpiDocumentScriptSolucao) {
+                                const docIdMatchSolucao = absoluteImageUrlSolucao.match(/docid=(\d+)/);
+                                if (docIdMatchSolucao && docIdMatchSolucao[1]) {
+                                    const docId = docIdMatchSolucao[1];
+                                    let metadataSessionTokenSolucao = null; 
+                                    try {
+                                        console.log(`ℹ️ Script GLPI (solução) detectado com docid=${docId}. Iniciando sessão para buscar metadados.`);
+                                        metadataSessionTokenSolucao = await iniciarSessaoGLPI();
+                                        if (!metadataSessionTokenSolucao) {
+                                            throw new Error("Falha ao obter token de sessão para metadados do documento GLPI (solução).");
+                                        }
+
+                                        const docMetaUrl = `${config.glpi.url}/Document/${docId}`;
+                                        console.log(`📄 Buscando metadados de (solução): ${docMetaUrl}`);
+                                        const docMetaResponse = await axios.get(docMetaUrl, {
+                                            headers: { "App-Token": config.glpi.appToken, "Session-Token": metadataSessionTokenSolucao }
+                                        });
+                                        if (docMetaResponse.data && docMetaResponse.data.filename && docMetaResponse.data.mime) {
+                                            filenameSolucao = docMetaResponse.data.filename;
+                                            descriptiveNameSolucao = filenameSolucao; 
+                                            finalMimeTypeSolucao = docMetaResponse.data.mime;
+                                            console.log(`✅ Metadados do Documento (solução) ID ${docId} obtidos: Nome='${filenameSolucao}', Tipo='${finalMimeTypeSolucao}'`);
+                                        } else {
+                                            console.warn(`⚠️ Metadados do Documento (solução) ID ${docId} incompletos. Fallback para ALT/Content-Type.`);
+                                            finalMimeTypeSolucao = mime.lookup(descriptiveNameSolucao) || imageResponseSolucao.headers['content-type'];
+                                        }
+                                    } catch (docMetaError) {
+                                        console.error(`❌ Erro ao buscar metadados do Documento (solução) ID ${docId}: ${docMetaError.message}. Fallback.`);
+                                        finalMimeTypeSolucao = mime.lookup(descriptiveNameSolucao) || imageResponseSolucao.headers['content-type'];
+                                    } finally {
+                                        if (metadataSessionTokenSolucao) await encerrarSessaoGLPI(metadataSessionTokenSolucao);
+                                        console.log(`ℹ️ Sessão de metadados para docid=${docId} (solução) encerrada.`);
+                                    }
+                                } else {
+                                    finalMimeTypeSolucao = mime.lookup(descriptiveNameSolucao) || imageResponseSolucao.headers['content-type'];
+                                }
+                            } else { 
+                                finalMimeTypeSolucao = imageResponseSolucao.headers['content-type'] || mime.lookup(descriptiveNameSolucao);
+                            }
+                            
+                            const bufferSolucao = Buffer.from(imageResponseSolucao.data, 'binary');
+                            const fileTypeInfoSolucao = await fileTypeFromBuffer(bufferSolucao);
+
+                            if (fileTypeInfoSolucao && fileTypeInfoSolucao.mime && !fileTypeInfoSolucao.mime.includes('unknown')) {
+                                finalMimeTypeSolucao = fileTypeInfoSolucao.mime;
+                                console.log(`✅ MIME Type para solução determinado por file-type: '${finalMimeTypeSolucao}'`);
+                            } else if (!finalMimeTypeSolucao || finalMimeTypeSolucao.includes('unknown') || (finalMimeTypeSolucao.startsWith('text/html') && !isGlpiDocumentScriptSolucao) || finalMimeTypeSolucao === 'application/octet-stream') {
+                                console.log(`⚠️ MIME Type atual para solução ('${finalMimeTypeSolucao}') é genérico ou HTML inesperado. Tentando inferir do nome descritivo ('${descriptiveNameSolucao}').`);
+                                const mimeFromDescName = mime.lookup(descriptiveNameSolucao);
+                                if (mimeFromDescName && !mimeFromDescName.includes('unknown') && !mimeFromDescName.startsWith('text/html') && mimeFromDescName !== 'application/octet-stream') {
+                                    finalMimeTypeSolucao = mimeFromDescName;
+                                    console.log(`✅ MIME Type para solução atualizado para '${finalMimeTypeSolucao}' a partir do nome descritivo.`);
+                                } else if (finalMimeTypeSolucao && finalMimeTypeSolucao.startsWith('text/html') && (!mimeFromDescName || mimeFromDescName.startsWith('text/html') || mimeFromDescName.includes('unknown') || mimeFromDescName === 'application/octet-stream')) {
+                                    console.log(`ℹ️ Nome descritivo para solução não forneceu um MIME Type melhor. Mantendo '${finalMimeTypeSolucao}'.`);
+                                } else {
+                                    finalMimeTypeSolucao = 'application/octet-stream';
+                                    console.log(`ℹ️ MIME Type para solução definido para fallback final: '${finalMimeTypeSolucao}'.`);
+                                }
+                            }
+
+                            let finalFilenameSolucao = filenameSolucao.replace(/[^a-zA-Z0-9_.-]/g, '_').replace(/\s+/g, '_').replace(/^_+|_+$/g, '');
+                            const currentExtSolucao = path.extname(finalFilenameSolucao);
+                            const determinedExtSolucao = mime.extension(finalMimeTypeSolucao);
+                            if (determinedExtSolucao) {
+                                if (currentExtSolucao.toLowerCase() !== `.${determinedExtSolucao.toLowerCase()}`) {
+                                    if (currentExtSolucao) finalFilenameSolucao = finalFilenameSolucao.substring(0, finalFilenameSolucao.length - currentExtSolucao.length);
+                                    finalFilenameSolucao += `.${determinedExtSolucao}`;
+                                }
+                            } else if (!currentExtSolucao && fileTypeInfoSolucao && fileTypeInfoSolucao.ext) {
+                                finalFilenameSolucao += `.${fileTypeInfoSolucao.ext}`;
+                            } else if (!currentExtSolucao) {
+                                finalFilenameSolucao += ".dat";
+                            }
+                            
+                            if (finalFilenameSolucao.startsWith('.') || finalFilenameSolucao.length === 0 || finalFilenameSolucao.toLowerCase() === "solução.dat" || finalFilenameSolucao === "_.dat" || finalFilenameSolucao === "_") {
+                                finalFilenameSolucao = `anexo_solucao_${moment().format('HHmmss')}${determinedExtSolucao ? '.' + determinedExtSolucao : '.dat'}`;
+                            }
+
+                            if (finalMimeTypeSolucao.startsWith('image/')) {
+                                await client.sendImage(sender, dataUriSolucao, finalFilenameSolucao, captionSolucao);
+                                console.log(`🖼️ Imagem da solução ('${finalFilenameSolucao}') enviada com legenda para ${sender}.`);
+                            } else {
+                                const textFallbackSolucao = htmlContentSolucao.replace(/<[^>]*>/g, '').trim(); // Use full HTML content for text fallback if not image
+                                await sendAndLogText(client, sender, `📝 *Solução:* ${textFallbackSolucao}\n📎 (Anexo: '${finalFilenameSolucao}' do tipo '${finalMimeTypeSolucao}' não pôde ser exibido diretamente.)`);
+                                console.log(`🚫 Mídia da solução ('${finalFilenameSolucao}', tipo: ${finalMimeTypeSolucao}) não é uma imagem. Enviado como texto/aviso para ${sender}.`);
+                            }
+                        } catch (error) {
+                            console.error(`❌ Erro ao processar mídia da solução para ${sender}: ${error.message}. Detalhes:`, error.response ? error.response.data : '');
+                            const textFallbackSolucaoOnError = textContentForCaptionSolucao;
+                            if (textFallbackSolucaoOnError) await sendAndLogText(client, sender, `📝 *Solução (imagem falhou):* ${textFallbackSolucaoOnError}`);
+                            else await sendAndLogText(client, sender, `📝 *Solução (imagem falhou ao carregar).*`);
+                        } finally {
+                            if (imageSessionTokenSolucao) {
+                                await encerrarSessaoGLPI(imageSessionTokenSolucao);
+                            }
                         }
                     }
                 } else {
@@ -1316,146 +1407,237 @@ async function handleMessageLogic(client, message) {
 
                         if (imgMatch && imgMatch[1]) {
                             const imageUrlRelative = imgMatch[1];
-                            // Padroniza a obtenção da URL absoluta, igual à da solução
                             const absoluteImageUrl = imageUrlRelative.startsWith('http') ? imageUrlRelative : new URL(imageUrlRelative, config.glpi.url).href;
+                            const textContentAntesDaImagem = htmlContent.substring(0, imgMatch.index).replace(/<[^>]*>/g, '').trim();
+                            const textContentDepoisDaImagem = htmlContent.substring(imgMatch.index + imgMatch[0].length).replace(/<[^>]*>/g, '').trim();
+                            const combinedTextContent = [textContentAntesDaImagem, textContentDepoisDaImagem].filter(Boolean).join(' ').trim();
 
-                            const textContentForCaption = htmlContent.replace(imgRegex, '').replace(/<[^>]*>/g, '').trim();
-                            let caption = `👣 *Acompanhamento:* ${textContentForCaption}`;
-                            if (caption.length > 1024) caption = caption.substring(0, 1021) + "..."; 
-
-                            let imageSessionToken = null;
-                            try {
-                                console.log(`👣 Baixando imagem do acompanhamento: ${absoluteImageUrl}`);
-                                if (absoluteImageUrl.startsWith(config.glpi.url)) {
-                                    imageSessionToken = await iniciarSessaoGLPI();
-                                    if (!imageSessionToken) throw new Error("Falha ao obter token de sessão para baixar mídia do acompanhamento (interna).");
+                            let isExternalDomainAcomp = true;
+                            if (config.glpi && config.glpi.url) {
+                                try {
+                                    const glpiHostname = new URL(config.glpi.url).hostname;
+                                    const imageHostname = new URL(absoluteImageUrl).hostname;
+                                    if (glpiHostname === imageHostname) {
+                                        isExternalDomainAcomp = false; // É do mesmo domínio, tratar como interna para download
+                                    }
+                                } catch (urlParseError) {
+                                    console.warn(`⚠️ Erro ao parsear URLs para verificação de domínio (acompanhamento): ${absoluteImageUrl} vs ${config.glpi.url}. Erro: ${urlParseError.message}. Recorrendo à verificação 'startsWith'.`);
+                                    isExternalDomainAcomp = !absoluteImageUrl.startsWith(config.glpi.url); // Fallback
                                 }
+                            } else {
+                                isExternalDomainAcomp = !absoluteImageUrl.startsWith(config.glpi.url); // Fallback se config.glpi.url não estiver definido
+                            }
 
-                                const imageResponse = await axios.get(absoluteImageUrl, {
-                                    headers: absoluteImageUrl.startsWith(config.glpi.url) ?
-                                        { "App-Token": config.glpi.appToken, "Session-Token": imageSessionToken } :
-                                        { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" },
-                                    responseType: 'arraybuffer'
-                                });
-                                
-                                if (imageSessionToken) {
-                                    await encerrarSessaoGLPI(imageSessionToken);
-                                    imageSessionToken = null;
+                            if (isExternalDomainAcomp) {
+                                // Tenta baixar e enviar imagem externa para acompanhamento
+                                let captionExternaAcomp = `👣 *Acompanhamento:*`;
+                                if (combinedTextContent) {
+                                    captionExternaAcomp += ` ${combinedTextContent}`;
                                 }
+                                if (captionExternaAcomp.length > 1024) captionExternaAcomp = captionExternaAcomp.substring(0, 1021) + "...";
 
-                                const responseContentTypeAcomp = imageResponse.headers['content-type'];
-                                console.log(`📄 Content-Type da resposta HTTP para '${absoluteImageUrl}': ${responseContentTypeAcomp}`);
-                                
-                                let descriptiveNameAcomp = "Acompanhamento";
-                                let filenameAcomp = descriptiveNameAcomp; // Initialize filename with default/alt
-                                const altMatchAcomp = htmlContent.match(/<img[^>]+alt="([^"]+)"[^>]*>/i);
-                                if (altMatchAcomp && altMatchAcomp[1] && altMatchAcomp[1].trim()) {
-                                    descriptiveNameAcomp = altMatchAcomp[1].trim();
-                                    filenameAcomp = descriptiveNameAcomp;
-                                }
+                                try {
+                                    console.log(`🌐 Baixando imagem externa do acompanhamento: ${absoluteImageUrl}`);
+                                    const imageResponse = await axios.get(absoluteImageUrl, {
+                                        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" },
+                                        responseType: 'arraybuffer'
+                                    });
 
-                                const isGlpiDocumentScript = absoluteImageUrl.includes("document.send.php");
-                                let finalMimeTypeAcomp = responseContentTypeAcomp; // Initialize with response
+                                    const imageBase64 = Buffer.from(imageResponse.data, 'binary').toString('base64');
+                                    
+                                    let descriptiveName = "Imagem Externa Acomp";
+                                    try {
+                                        const urlPath = new URL(absoluteImageUrl).pathname;
+                                        const base = path.basename(urlPath);
+                                        if (base && base !== '/') descriptiveName = base;
+                                    } catch (e) { /* ignore, use default */ }
+                                    let filename = descriptiveName;
 
-                                if (isGlpiDocumentScript) {
-                                    const docIdMatch = absoluteImageUrl.match(/docid=(\d+)/);
-                                    if (docIdMatch && docIdMatch[1]) {
-                                        const docId = docIdMatch[1];
-                                        let metadataSessionToken = null; 
-                                        try {
-                                            console.log(`ℹ️ Script GLPI (acompanhamento) detectado com docid=${docId}. Iniciando sessão para buscar metadados.`);
-                                            metadataSessionToken = await iniciarSessaoGLPI();
-                                            if (!metadataSessionToken) {
-                                                throw new Error("Falha ao obter token de sessão para metadados do documento GLPI (acompanhamento).");
-                                            }
+                                    let finalMimeType = imageResponse.headers['content-type'];
+                                    const buffer = Buffer.from(imageResponse.data, 'binary');
+                                    const fileTypeInfo = await fileTypeFromBuffer(buffer);
 
-                                            const docMetaUrl = `${config.glpi.url}/Document/${docId}`;
-                                            console.log(`📄 Buscando metadados de (acompanhamento): ${docMetaUrl}`);
-                                            const docMetaResponse = await axios.get(docMetaUrl, {
-                                                headers: { "App-Token": config.glpi.appToken, "Session-Token": metadataSessionToken }
-                                            });
-                                            if (docMetaResponse.data && docMetaResponse.data.filename && docMetaResponse.data.mime) {
-                                                filenameAcomp = docMetaResponse.data.filename;
-                                                finalMimeTypeAcomp = docMetaResponse.data.mime;
-                                                console.log(`✅ Metadados do Documento (acompanhamento) ID ${docId} obtidos: Nome='${filenameAcomp}', Tipo='${finalMimeTypeAcomp}'`);
-                                            } else {
-                                                console.warn(`⚠️ Metadados do Documento (acompanhamento) ID ${docId} incompletos. Fallback para ALT/Content-Type.`);
-                                                finalMimeTypeAcomp = mime.lookup(descriptiveNameAcomp) || responseContentTypeAcomp;
-                                            }
-                                        } catch (docMetaError) {
-                                            console.error(`❌ Erro ao buscar metadados do Documento (acompanhamento) ID ${docId}: ${docMetaError.message}. Fallback.`);
-                                            finalMimeTypeAcomp = mime.lookup(descriptiveNameAcomp) || responseContentTypeAcomp;
-                                        } finally {
-                                            if (metadataSessionToken) await encerrarSessaoGLPI(metadataSessionToken);
-                                            console.log(`ℹ️ Sessão de metadados para docid=${docId} (acompanhamento) encerrada.`);
+                                    if (fileTypeInfo && fileTypeInfo.mime && !fileTypeInfo.mime.includes('unknown')) {
+                                        finalMimeType = fileTypeInfo.mime;
+                                    } else if (!finalMimeType || finalMimeType.includes('unknown') || finalMimeType.startsWith('text/html') || finalMimeType === 'application/octet-stream') {
+                                        const mimeFromDescName = mime.lookup(descriptiveName);
+                                        if (mimeFromDescName && !mimeFromDescName.includes('unknown') && !mimeFromDescName.startsWith('text/html') && mimeFromDescName !== 'application/octet-stream') {
+                                            finalMimeType = mimeFromDescName;
+                                        } else {
+                                            finalMimeType = 'application/octet-stream';
                                         }
-                                    } else { // GLPI Script but no docid
-                                        finalMimeTypeAcomp = mime.lookup(descriptiveNameAcomp) || responseContentTypeAcomp;
                                     }
-                                } else {
-                                    // Para URLs que não são o script do GLPI, ou se não houver 'alt' útil, usamos o Content-Type da resposta.
-                                    finalMimeTypeAcomp = responseContentTypeAcomp || mime.lookup(descriptiveNameAcomp);
-                                }
-
-                                const bufferAcomp = Buffer.from(imageResponse.data, 'binary');
-                                const fileTypeInfoAcomp = await fileTypeFromBuffer(bufferAcomp);
-
-                                // Fallback final se o MIME type ainda for desconhecido ou genérico
-                                if (fileTypeInfoAcomp && fileTypeInfoAcomp.mime && !fileTypeInfoAcomp.mime.includes('unknown')) {
-                                    finalMimeTypeAcomp = fileTypeInfoAcomp.mime;
-                                    console.log(`✅ MIME Type para acompanhamento determinado por file-type: '${finalMimeTypeAcomp}'`);
-                                } else if (!finalMimeTypeAcomp || finalMimeTypeAcomp.includes('unknown') || (finalMimeTypeAcomp.startsWith('text/html') && !isGlpiDocumentScript) || finalMimeTypeAcomp === 'application/octet-stream') {
                                     
-                                    console.log(`⚠️ MIME Type atual para acompanhamento ('${finalMimeTypeAcomp}') é genérico ou HTML inesperado. Tentando inferir do nome descritivo ('${descriptiveNameAcomp}').`);
-                                    const mimeFromDescName = mime.lookup(descriptiveNameAcomp);
+                                    let finalFilename = filename.replace(/[^a-zA-Z0-9_.-]/g, '_').replace(/\s+/g, '_').replace(/^_+|_+$/g, '');
+                                    const currentExt = path.extname(finalFilename);
+                                    const determinedExt = mime.extension(finalMimeType);
+
+                                    if (determinedExt) {
+                                        if (currentExt.toLowerCase() !== `.${determinedExt.toLowerCase()}`) {
+                                            if (currentExt) finalFilename = finalFilename.substring(0, finalFilename.length - currentExt.length);
+                                            finalFilename += `.${determinedExt}`;
+                                        }
+                                    } else if (!currentExt && fileTypeInfo && fileTypeInfo.ext) {
+                                        finalFilename += `.${fileTypeInfo.ext}`;
+                                    } else if (!currentExt) { finalFilename += ".dat"; }
+
+                                    if (finalFilename.startsWith('.') || finalFilename.length === 0 || finalFilename.toLowerCase() === "imagem_externa_acomp.dat" || finalFilename === "_.dat" || finalFilename === "_") {
+                                        finalFilename = `acomp_externo_${moment().format('HHmmss')}${determinedExt ? '.' + determinedExt : '.dat'}`;
+                                    }
                                     
-                                    if (mimeFromDescName && !mimeFromDescName.includes('unknown') && !mimeFromDescName.startsWith('text/html') && mimeFromDescName !== 'application/octet-stream') {
-                                        finalMimeTypeAcomp = mimeFromDescName;
-                                        console.log(`✅ MIME Type para acompanhamento atualizado para '${finalMimeTypeAcomp}' a partir do nome descritivo.`);
-                                    } else if (finalMimeTypeAcomp && finalMimeTypeAcomp.startsWith('text/html') && (!mimeFromDescName || mimeFromDescName.startsWith('text/html') || mimeFromDescName.includes('unknown') || mimeFromDescName === 'application/octet-stream')) {
-                                        console.log(`ℹ️ Nome descritivo para acompanhamento não forneceu um MIME Type melhor. Mantendo '${finalMimeTypeAcomp}'.`);
+                                    const dataUri = `data:${finalMimeType};base64,${imageBase64}`;
+
+                                    if (finalMimeType.startsWith('image/')) {
+                                        await client.sendImage(sender, dataUri, finalFilename, captionExternaAcomp);
+                                        console.log(`🖼️ Imagem externa do acompanhamento ('${finalFilename}') enviada com legenda para ${sender}.`);
                                     } else {
-                                        finalMimeTypeAcomp = 'application/octet-stream';
-                                        console.log(`ℹ️ MIME Type para acompanhamento definido para fallback final: '${finalMimeTypeAcomp}'.`);
+                                        let fallbackMsg = captionExternaAcomp + `\n\n📎 Link para conteúdo externo (não pôde ser incorporado como imagem): ${absoluteImageUrl}`;
+                                        await sendAndLogText(client, sender, fallbackMsg);
                                     }
+                                } catch (error) {
+                                    console.error(`❌ Erro ao processar mídia externa do acompanhamento (${absoluteImageUrl}): ${error.message}.`);
+                                    let errorFallbackMsg = captionExternaAcomp + `\n\n⚠️ Falha ao baixar conteúdo externo: ${absoluteImageUrl}`;
+                                    await sendAndLogText(client, sender, errorFallbackMsg);
                                 }
+                            } else {
+                                // URL Interna (mesmo domínio do GLPI): lógica de download e envio
+                                const textContentForCaption = combinedTextContent;
+                                let caption = `👣 *Acompanhamento:*`;
+                                if (textContentForCaption) {
+                                    caption += ` ${textContentForCaption}`;
+                                }
+                                if (caption.length > 1024) caption = caption.substring(0, 1021) + "...";
 
-                                let finalFilenameAcomp = filenameAcomp.replace(/[^a-zA-Z0-9_.-]/g, '_').replace(/\s+/g, '_').replace(/^_+|_+$/g, '');
-                                // Garante que o nome do arquivo não seja apenas "." ou ".." ou algo problemático
-                                const currentExtAcomp = path.extname(finalFilenameAcomp);
-                                const determinedExtAcomp = mime.extension(finalMimeTypeAcomp);
-                                if (determinedExtAcomp) {
-                                    if (currentExtAcomp.toLowerCase() !== `.${determinedExtAcomp.toLowerCase()}`) {
-                                        if (currentExtAcomp) finalFilenameAcomp = finalFilenameAcomp.substring(0, finalFilenameAcomp.length - currentExtAcomp.length);
-                                        finalFilenameAcomp += `.${determinedExtAcomp}`;
+                                let imageSessionToken = null;
+                                try {
+                                    console.log(`👣 Baixando imagem do acompanhamento: ${absoluteImageUrl}`);
+                                    // Sempre tenta iniciar sessão se for domínio GLPI
+                                    imageSessionToken = await iniciarSessaoGLPI();
+                                    if (!imageSessionToken) throw new Error("Falha ao obter token de sessão para baixar mídia do acompanhamento (domínio GLPI).");
+                                    
+
+                                    const imageResponse = await axios.get(absoluteImageUrl, {
+                                        headers: { // Sempre usa tokens para domínio GLPI
+                                            "App-Token": config.glpi.appToken, 
+                                            "Session-Token": imageSessionToken },
+                                        responseType: 'arraybuffer'
+                                    });
+                                    
+                                    if (imageSessionToken) {
+                                        await encerrarSessaoGLPI(imageSessionToken);
+                                        imageSessionToken = null; 
                                     }
-                                } else if (!currentExtAcomp && fileTypeInfoAcomp && fileTypeInfoAcomp.ext) {
-                                    finalFilenameAcomp += `.${fileTypeInfoAcomp.ext}`;
-                                } else if (!currentExtAcomp) {
-                                    finalFilenameAcomp += ".dat";
-                                }
-                                
-                                if (finalFilenameAcomp.startsWith('.') || finalFilenameAcomp.length === 0 || finalFilenameAcomp.toLowerCase() === "acompanhamento.dat" || finalFilenameAcomp === "_.dat" || finalFilenameAcomp === "_") {
-                                    finalFilenameAcomp = `anexo_acomp_${moment().format('HHmmss')}${determinedExtAcomp ? '.' + determinedExtAcomp : '.dat'}`;
-                                }
 
-                                const imageBase64 = Buffer.from(imageResponse.data, 'binary').toString('base64');
-                                const dataUri = `data:${finalMimeTypeAcomp};base64,${imageBase64}`;
-                                if (finalMimeTypeAcomp.startsWith('image/')) {
-                                    await client.sendImage(sender, dataUri, finalFilenameAcomp, caption);
-                                    console.log(`🖼️ Imagem do acompanhamento ('${finalFilenameAcomp}') enviada com legenda para ${sender}.`);
-                                } else {
-                                    const textContentForFallback = htmlContent.replace(/<[^>]*>/g, '').trim();
-                                    await sendAndLogText(client, sender, `👣 *Acompanhamento:* ${textContentForFallback}\n📎 (Anexo: '${descriptiveNameAcomp}' do tipo '${finalMimeTypeAcomp}' não pôde ser exibido diretamente.)`);
-                                    console.log(`🚫 Mídia do acompanhamento ('${finalFilenameAcomp}', tipo: ${finalMimeTypeAcomp}) não é uma imagem. Enviado como texto/aviso para ${sender}.`);
-                                }
-                            } catch (error) {
-                                console.error(`❌ Erro ao processar mídia do acompanhamento para ${sender}: ${error.message}. Detalhes:`, error.response ? error.response.data : '');
-                                const textFallback = htmlContent.replace(/<[^>]*>/g, '').trim();
-                                if (textFallback) await sendAndLogText(client, sender, `👣 *Acompanhamento (imagem falhou):* ${textFallback}`);
-                            } finally {
-                                if (imageSessionToken) {
-                                    await encerrarSessaoGLPI(imageSessionToken);
+                                    const responseContentTypeAcomp = imageResponse.headers['content-type'];
+                                    console.log(`📄 Content-Type da resposta HTTP para '${absoluteImageUrl}': ${responseContentTypeAcomp}`);
+                                    
+                                    let descriptiveNameAcomp = "Acompanhamento";
+                                    let filenameAcomp = descriptiveNameAcomp; 
+                                    const altMatchAcomp = htmlContent.match(/<img[^>]+alt="([^"]+)"[^>]*>/i);
+                                    if (altMatchAcomp && altMatchAcomp[1] && altMatchAcomp[1].trim()) {
+                                        descriptiveNameAcomp = altMatchAcomp[1].trim();
+                                        filenameAcomp = descriptiveNameAcomp;
+                                    }
+
+                                    const isGlpiDocumentScript = absoluteImageUrl.includes("document.send.php");
+                                    let finalMimeTypeAcomp = responseContentTypeAcomp; 
+
+                                    if (isGlpiDocumentScript) {
+                                        const docIdMatch = absoluteImageUrl.match(/docid=(\d+)/);
+                                        if (docIdMatch && docIdMatch[1]) {
+                                            const docId = docIdMatch[1];
+                                            let metadataSessionToken = null; 
+                                            try {
+                                                console.log(`ℹ️ Script GLPI (acompanhamento) detectado com docid=${docId}. Iniciando sessão para buscar metadados.`);
+                                                metadataSessionToken = await iniciarSessaoGLPI();
+                                                if (!metadataSessionToken) {
+                                                    throw new Error("Falha ao obter token de sessão para metadados do documento GLPI (acompanhamento).");
+                                                }
+
+                                                const docMetaUrl = `${config.glpi.url}/Document/${docId}`;
+                                                console.log(`📄 Buscando metadados de (acompanhamento): ${docMetaUrl}`);
+                                                const docMetaResponse = await axios.get(docMetaUrl, {
+                                                    headers: { "App-Token": config.glpi.appToken, "Session-Token": metadataSessionToken }
+                                                });
+                                                if (docMetaResponse.data && docMetaResponse.data.filename && docMetaResponse.data.mime) {
+                                                    filenameAcomp = docMetaResponse.data.filename;
+                                                    finalMimeTypeAcomp = docMetaResponse.data.mime;
+                                                    console.log(`✅ Metadados do Documento (acompanhamento) ID ${docId} obtidos: Nome='${filenameAcomp}', Tipo='${finalMimeTypeAcomp}'`);
+                                                } else {
+                                                    console.warn(`⚠️ Metadados do Documento (acompanhamento) ID ${docId} incompletos. Fallback para ALT/Content-Type.`);
+                                                    finalMimeTypeAcomp = mime.lookup(descriptiveNameAcomp) || responseContentTypeAcomp;
+                                                }
+                                            } catch (docMetaError) {
+                                                console.error(`❌ Erro ao buscar metadados do Documento (acompanhamento) ID ${docId}: ${docMetaError.message}. Fallback.`);
+                                                finalMimeTypeAcomp = mime.lookup(descriptiveNameAcomp) || responseContentTypeAcomp;
+                                            } finally {
+                                                if (metadataSessionToken) await encerrarSessaoGLPI(metadataSessionToken);
+                                                console.log(`ℹ️ Sessão de metadados para docid=${docId} (acompanhamento) encerrada.`);
+                                            }
+                                        } else { 
+                                            finalMimeTypeAcomp = mime.lookup(descriptiveNameAcomp) || responseContentTypeAcomp;
+                                        }
+                                    } else {
+                                        finalMimeTypeAcomp = responseContentTypeAcomp || mime.lookup(descriptiveNameAcomp);
+                                    }
+
+                                    const bufferAcomp = Buffer.from(imageResponse.data, 'binary');
+                                    const fileTypeInfoAcomp = await fileTypeFromBuffer(bufferAcomp);
+
+                                    if (fileTypeInfoAcomp && fileTypeInfoAcomp.mime && !fileTypeInfoAcomp.mime.includes('unknown')) {
+                                        finalMimeTypeAcomp = fileTypeInfoAcomp.mime;
+                                        console.log(`✅ MIME Type para acompanhamento determinado por file-type: '${finalMimeTypeAcomp}'`);
+                                    } else if (!finalMimeTypeAcomp || finalMimeTypeAcomp.includes('unknown') || (finalMimeTypeAcomp.startsWith('text/html') && !isGlpiDocumentScript) || finalMimeTypeAcomp === 'application/octet-stream') {
+                                        console.log(`⚠️ MIME Type atual para acompanhamento ('${finalMimeTypeAcomp}') é genérico ou HTML inesperado. Tentando inferir do nome descritivo ('${descriptiveNameAcomp}').`);
+                                        const mimeFromDescName = mime.lookup(descriptiveNameAcomp);
+                                        if (mimeFromDescName && !mimeFromDescName.includes('unknown') && !mimeFromDescName.startsWith('text/html') && mimeFromDescName !== 'application/octet-stream') {
+                                            finalMimeTypeAcomp = mimeFromDescName;
+                                            console.log(`✅ MIME Type para acompanhamento atualizado para '${finalMimeTypeAcomp}' a partir do nome descritivo.`);
+                                        } else if (finalMimeTypeAcomp && finalMimeTypeAcomp.startsWith('text/html') && (!mimeFromDescName || mimeFromDescName.startsWith('text/html') || mimeFromDescName.includes('unknown') || mimeFromDescName === 'application/octet-stream')) {
+                                            console.log(`ℹ️ Nome descritivo para acompanhamento não forneceu um MIME Type melhor. Mantendo '${finalMimeTypeAcomp}'.`);
+                                        } else {
+                                            finalMimeTypeAcomp = 'application/octet-stream';
+                                            console.log(`ℹ️ MIME Type para acompanhamento definido para fallback final: '${finalMimeTypeAcomp}'.`);
+                                        }
+                                    }
+
+                                    let finalFilenameAcomp = filenameAcomp.replace(/[^a-zA-Z0-9_.-]/g, '_').replace(/\s+/g, '_').replace(/^_+|_+$/g, '');
+                                    const currentExtAcomp = path.extname(finalFilenameAcomp);
+                                    const determinedExtAcomp = mime.extension(finalMimeTypeAcomp);
+                                    if (determinedExtAcomp) {
+                                        if (currentExtAcomp.toLowerCase() !== `.${determinedExtAcomp.toLowerCase()}`) {
+                                            if (currentExtAcomp) finalFilenameAcomp = finalFilenameAcomp.substring(0, finalFilenameAcomp.length - currentExtAcomp.length);
+                                            finalFilenameAcomp += `.${determinedExtAcomp}`;
+                                        }
+                                    } else if (!currentExtAcomp && fileTypeInfoAcomp && fileTypeInfoAcomp.ext) {
+                                        finalFilenameAcomp += `.${fileTypeInfoAcomp.ext}`;
+                                    } else if (!currentExtAcomp) {
+                                        finalFilenameAcomp += ".dat";
+                                    }
+                                    
+                                    if (finalFilenameAcomp.startsWith('.') || finalFilenameAcomp.length === 0 || finalFilenameAcomp.toLowerCase() === "acompanhamento.dat" || finalFilenameAcomp === "_.dat" || finalFilenameAcomp === "_") {
+                                        finalFilenameAcomp = `anexo_acomp_${moment().format('HHmmss')}${determinedExtAcomp ? '.' + determinedExtAcomp : '.dat'}`;
+                                    }
+
+                                    const imageBase64 = Buffer.from(imageResponse.data, 'binary').toString('base64');
+                                    const dataUri = `data:${finalMimeTypeAcomp};base64,${imageBase64}`;
+                                    if (finalMimeTypeAcomp.startsWith('image/')) {
+                                        await client.sendImage(sender, dataUri, finalFilenameAcomp, caption);
+                                        console.log(`🖼️ Imagem do acompanhamento ('${finalFilenameAcomp}') enviada com legenda para ${sender}.`);
+                                    } else {
+                                        const textContentForFallback = htmlContent.replace(/<[^>]*>/g, '').trim(); // Use full HTML content for text fallback
+                                        await sendAndLogText(client, sender, `👣 *Acompanhamento:* ${textContentForFallback}\n📎 (Anexo: '${descriptiveNameAcomp}' do tipo '${finalMimeTypeAcomp}' não pôde ser exibido diretamente.)`);
+                                        console.log(`🚫 Mídia do acompanhamento ('${finalFilenameAcomp}', tipo: ${finalMimeTypeAcomp}) não é uma imagem. Enviado como texto/aviso para ${sender}.`);
+                                    }
+                                } catch (error) {
+                                    console.error(`❌ Erro ao processar mídia do acompanhamento para ${sender}: ${error.message}. Detalhes:`, error.response ? error.response.data : '');
+                                    const textFallbackOnError = textContentForCaption;
+                                    if (textFallbackOnError) await sendAndLogText(client, sender, `👣 *Acompanhamento (imagem falhou):* ${textFallbackOnError}`);
+                                    else await sendAndLogText(client, sender, `👣 *Acompanhamento (imagem falhou ao carregar).*`);
+                                } finally {
+                                    if (imageSessionToken) {
+                                        await encerrarSessaoGLPI(imageSessionToken);
+                                    }
                                 }
                             }
                         } else {
